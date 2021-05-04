@@ -5,8 +5,8 @@ use crate::util::*;
 
 
 pub fn run_builder(creep:Creep){
-
     let name = creep.name();
+    info!("running builder {}", creep.name());
 
     debug!("check construction sites {}", name);
     let constructin_sites = &creep
@@ -18,7 +18,7 @@ pub fn run_builder(creep:Creep){
 
         let r = creep.build(construction_site);
         if r == ReturnCode::Ok {
-            debug!("build to my_construction_sites!!");
+            info!("build to my_construction_sites!!");
             return ;
         }
     }

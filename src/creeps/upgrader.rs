@@ -7,6 +7,7 @@ use crate::util::*;
 pub fn run_upgrader(creep:Creep){
 
     let name = creep.name();
+    info!("running upgrader {}", creep.name());
 
     debug!("check controller {}", name);
 

@@ -1,13 +1,35 @@
 mod builder;
 mod harvester;
 mod upgrader;
+mod repairer;
 
 use log::*;
-use screeps::{LookConstant, Part, Position, ResourceType, ReturnCode, RoomObjectProperties, find, look::CREEPS, pathfinder::SearchResults, prelude::*};
+use screeps::{Creep, LookConstant, Part, Position, ResourceType, ReturnCode, RoomObjectProperties, find, look::CREEPS, pathfinder::SearchResults, prelude::*};
 use screeps::constants::find::*;
 use crate::util::*;
 
 use stdweb::serde ;
+
+
+fn reset_source_target(creep: &Creep) -> Position {
+    let res = find_nearest_active_source(&creep);
+    let mut ret_position ;
+
+    if res.load_local_path().len() > 0 {
+
+        let last_pos = *(res.load_local_path().last().unwrap());
+
+        let json_str = serde_json::to_string(&last_pos).unwrap();
+        creep.memory().set("target_pos", json_str);
+
+        ret_position = last_pos.clone() ;
+        debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
+    } else {
+        ret_position = creep.pos() ;
+    }       
+    
+    return ret_position ;
+}
 
 
 pub fn creep_loop() {
@@ -15,14 +37,16 @@ pub fn creep_loop() {
     let mut num_builder:i32 = 0 ;
     let mut num_harvester:i32 = 0 ;
     let mut num_upgrader:i32 = 0 ;
+    let mut num_harvester_spawn:i32 = 0;
+    let mut num_repairer:i32 = 0 ;
 
     for creep in screeps::game::creeps::values() {
         let name = creep.name();
-        debug!("running creep {}", name);
+        info!("running creep {}", name);
 
         let role = creep.memory().string("role");
         let mut role_string =  String::from("none");
-        debug!("role:{:?}", role); 
+        info!("role:{:?}", role); 
 
         if let Ok(object) = role {
             if let Some(object) = object {
@@ -37,6 +61,10 @@ pub fn creep_loop() {
                 num_harvester += 1;
             }
 
+            "harvester_spawn" => {
+                num_harvester_spawn += 1;
+            }
+
             "builder" => {
                 num_builder += 1;
             }
@@ -45,15 +73,27 @@ pub fn creep_loop() {
                 num_upgrader += 1;
             }
 
+            "repairer" => {
+                num_repairer += 1;               
+            }
+
             "none" => {
-                if num_upgrader <= (screeps::game::creeps::values().len() as i32 / 4) {
+                if num_harvester_spawn == 0 {
+                    creep.memory().set("role", "harvester_spawn");
+                    num_harvester_spawn += 1 ;
+                    role_string = String::from("harvester_spawn") ;
+                } else if num_upgrader <= (screeps::game::creeps::values().len() as i32 / 4) {
                     creep.memory().set("role", "upgrader");
                     num_upgrader += 1 ;
                     role_string = String::from("upgrader") ;
                 } else if num_builder <= (screeps::game::creeps::values().len() as i32 / 4) {
                     creep.memory().set("role", "builder");
                     num_builder += 1;
-                    role_string = String::from("builder") ;                
+                    role_string = String::from("builder") ;        
+                } else if num_repairer <= (screeps::game::creeps::values().len() as i32 / 10) {
+                    creep.memory().set("role", "repairer");
+                    num_repairer += 1;
+                    role_string = String::from("repairer") ;      
                 } else {
                     creep.memory().set("role", "harvester");
                     num_harvester += 1;     
@@ -109,77 +149,28 @@ pub fn creep_loop() {
                                     if look_result.len() > 0 {
                                         debug!("re-check source :{}", defined_target_pos);
                                         creep.memory().del("target_pos");
-                                        
-                                        let res = find_nearest_active_source(&creep);
 
-                                        if res.load_local_path().len() > 0 {
-                    
-                                            let last_pos = *(res.load_local_path().last().unwrap());
-                    
-                                            let json_str = serde_json::to_string(&last_pos).unwrap();
-                                            creep.memory().set("target_pos", json_str);
-                    
-                                            defined_target_pos = last_pos.clone() ;
-                                            debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
-                                        } else {
-                                            defined_target_pos = creep.pos() ;
-                                        }                                       
+                                        defined_target_pos = reset_source_target(&creep) ;
                                     }
                                 }
 
                                 Err(err) => {
-                                    let res = find_nearest_active_source(&creep);
-
-                                    if res.load_local_path().len() > 0 {
-                
-                                        let last_pos = *(res.load_local_path().last().unwrap());
-                
-                                        let json_str = serde_json::to_string(&last_pos).unwrap();
-                                        creep.memory().set("target_pos", json_str);
-                
-                                        defined_target_pos = last_pos.clone() ;
-                                        debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
-                                    } else {
-                                        defined_target_pos = creep.pos() ;
-                                    }
+                                    //ロードに成功して値もあったけどDeSerializeできなかった.
+                                    defined_target_pos = reset_source_target(&creep) ;
                                 }
                             }
                         }
         
                         None => {
-                            let res = find_nearest_active_source(&creep);
-
-                            if res.load_local_path().len() > 0 {
-        
-                                let last_pos = *(res.load_local_path().last().unwrap());
-        
-                                let json_str = serde_json::to_string(&last_pos).unwrap();
-                                creep.memory().set("target_pos", json_str);
-        
-                                defined_target_pos = last_pos.clone() ;
-                                debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
-                            } else {
-                                defined_target_pos = creep.pos() ;
-                            } 
+                            //ロードに成功したけど値がない.
+                            defined_target_pos = reset_source_target(&creep) ;                            
                         }
                     }
                 }
 
+                //ロードに失敗(key自体がない).
                 Err(err) => {
-                    let res = find_nearest_active_source(&creep);
-
-                    if res.load_local_path().len() > 0 {
-
-                        let last_pos = *(res.load_local_path().last().unwrap());
-
-                        let json_str = serde_json::to_string(&last_pos).unwrap();
-                        creep.memory().set("target_pos", json_str);
-
-                        defined_target_pos = last_pos.clone() ;
-                        debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
-                    } else {
-                        defined_target_pos = creep.pos() ;
-                    }                
+                    defined_target_pos = reset_source_target(&creep) ;               
                 }
             }
 
@@ -222,6 +213,10 @@ pub fn creep_loop() {
                     harvester::run_harvester(creep) ;
                 }
 
+                "harvester_spawn" => {
+                    harvester::run_harvester_spawn(creep) ;
+                }
+
                 "builder" => {
                     builder::run_builder(creep) ;
                 }
@@ -230,18 +225,12 @@ pub fn creep_loop() {
                     upgrader::run_upgrader(creep) ;
                 }
 
+                "repairer" => {
+                    repairer::run_repairer(creep) ;              
+                }
+
                 "none" => {
-                    if num_upgrader <= (screeps::game::creeps::values().len() as i32 / 4) {
-                        creep.memory().set("role", "upgrader");
-                        upgrader::run_upgrader(creep) ;
-                    } else if num_builder <= (screeps::game::creeps::values().len() as i32 / 4) {
-                        creep.memory().set("role", "builder");
-                        builder::run_builder(creep) ;  
-            
-                    } else {
-                        creep.memory().set("role", "harvester");
-                        harvester::run_harvester(creep) ;                     
-                    }
+                    error!("no role info");
                 }
 
                 &_ => {
@@ -255,7 +244,8 @@ pub fn creep_loop() {
     screeps::memory::root().set("num_upgrader", num_upgrader);
     screeps::memory::root().set("num_builder", num_builder);   
     screeps::memory::root().set("num_harvester", num_harvester);
-
+    screeps::memory::root().set("num_harvester_spawn", num_harvester_spawn);
+    screeps::memory::root().set("num_repairer", num_repairer);
 }
 
 

@@ -10,14 +10,13 @@ use screeps::constants::find::*;
 mod creeps;
 mod create;
 mod util;
-
+mod defence;
 
 mod logging;
 
 
-
 fn main() {
-    logging::setup_logging(logging::Debug);
+    logging::setup_logging(logging::Info);
 
     js! {
         var game_loop = @{game_loop};
@@ -42,13 +41,16 @@ fn main() {
 }
 
 fn game_loop() {
-    debug!("loop starting! CPU: {}", screeps::game::cpu::get_used());
+    info!("loop starting! CPU: {}", screeps::game::cpu::get_used());
 
-    debug!("running spawns");
+    info!("running spawns");
     create::spawn::do_spawn();
 
-    debug!("running creeps");
+    info!("running creeps");
     creeps::creep_loop();
+
+    info!("running towers");
+    defence::tower::run_tower();
 
     let time = screeps::game::time();
 
