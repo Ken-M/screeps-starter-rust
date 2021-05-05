@@ -23,11 +23,11 @@ pub fn run_tower(){
                     .find(HOSTILE_CREEPS);
         
                     for enemy in enemies {
-                        debug!("try attack spawn {}", my_tower.id());
+                        debug!("try attack enemy {}", my_tower.id());
                         let r = my_tower.attack(&enemy) ;
             
                         if r == ReturnCode::Ok {
-                            info!("attack to spawn!!");
+                            info!("attack to enemy!!");
                             task_done = true ;
                             break ;
                         }
@@ -62,29 +62,31 @@ pub fn run_tower(){
                         return ;
                     }
 
-                    debug!("repair structure {}", my_tower.id());
-                    let my_structures = my_tower
-                    .room()
-                    .expect("room is not visible to you")
-                    .find(STRUCTURES);
-        
-                    for my_structure in my_structures {
+                    if my_tower.store_of(ResourceType::Energy) > (my_tower.store_capacity(Some(ResourceType::Energy))/2) {
+                        debug!("repair structure {}", my_tower.id());
+                        let my_structures = my_tower
+                        .room()
+                        .expect("room is not visible to you")
+                        .find(STRUCTURES);
+            
+                        for my_structure in my_structures {
 
-                        match my_structure.as_attackable() {
+                            match my_structure.as_attackable() {
 
-                            Some(attackable) => {                    
-                                if attackable.hits() < attackable.hits_max() {
-                                    let r = my_tower.repair(&my_structure) ;               
-                                    if r == ReturnCode::Ok {
-                                        info!("repair my structure!!");
-                                        task_done = true ;
-                                        break ;
-                                    }
-                                } 
-                            }
+                                Some(attackable) => {                    
+                                    if attackable.hits() < attackable.hits_max() {
+                                        let r = my_tower.repair(&my_structure) ;               
+                                        if r == ReturnCode::Ok {
+                                            info!("repair my structure!!");
+                                            task_done = true ;
+                                            break ;
+                                        }
+                                    } 
+                                }
 
-                            None => {
-                                // my_struct is not transferable.
+                                None => {
+                                    // my_struct is not transferable.
+                                }
                             }
                         }
                     } 

@@ -4,7 +4,7 @@ use screeps::constants::find::*;
 use crate::util::*;
 
 
-pub fn run_upgrader(creep:Creep){
+pub fn run_upgrader(creep:&Creep){
 
     let name = creep.name();
     info!("running upgrader {}", creep.name());

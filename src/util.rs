@@ -1,10 +1,9 @@
 use log::*;
-use screeps::{ConstructionSite, FindOptions, RoomObjectProperties, Source, Structure, StructureProperties, pathfinder::*};
+use screeps::{ConstructionSite, FindOptions, RoomObjectProperties, RoomPosition, Source, Structure, StructureProperties, pathfinder::*, LookResult};
 use screeps::constants::find::*;
 use screeps::constants::*;
 use screeps::objects::HasPosition ;
 use screeps::local::RoomName ;
-use screeps::pathfinder::* ;
 use std::collections::HashMap;
 
 use lazy_static::lazy_static;
@@ -68,8 +67,8 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static>
                     cost_matrix.set(local_pos.clone(), 1);
 
                 } else if chk_struct.structure_type() != StructureType::Container &&
-                          chk_struct.structure_type() != StructureType::Rampart ||
-                          check_my_structure(&chk_struct) == false  {
+                          (chk_struct.structure_type() != StructureType::Rampart ||
+                          check_my_structure(&chk_struct) == false)  {
 
                         // Can't walk through non-walkable buildings
                         cost_matrix.set(local_pos.clone(), 0xff);
@@ -94,6 +93,46 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static>
     let room_cost_result = MultiRoomCostResult::CostMatrix(cost_matrix) ;
     return room_cost_result ;
 }
+
+
+pub fn check_walkable(position: &RoomPosition) -> bool {
+    let chk_room = screeps::game::rooms::get(position.room_name()) ;
+
+    if let Some(room) = chk_room {
+        let objects = room.look_at(position) ;
+
+        for object in objects {
+
+            match object {
+                LookResult::Creep(creep)=>{
+                    return false ;
+                }
+
+                LookResult::Terrain(terrain)=>{
+                    if terrain == Terrain::Wall {
+                        return false ;
+                    }
+                }
+
+                LookResult::Structure(structure)=>{
+
+                    if structure.structure_type() != StructureType::Container &&
+                    (structure.structure_type() != StructureType::Rampart ||
+                    check_my_structure(&structure) == false)  {
+                        return false;
+                    }
+                }           
+
+                _ => {
+                    // check next.
+                }
+            }
+        }
+    }
+
+    return true ;
+}   
+
 
 
 pub fn check_my_structure(structure: &screeps::objects::Structure) -> bool
@@ -299,6 +338,51 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep) -> screeps::p
 
     for chk_item in item_list.iter() {
         find_item_list.push((chk_item.clone(), 1));     
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+
+pub fn find_flee_path_from_active_source(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(SOURCES_ACTIVE);
+
+    let mut find_item_list = Vec::<(Source, u32)>::new() ;
+
+    for chk_item in item_list.iter() {
+        find_item_list.push((chk_item.clone(), 2));     
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10)
+    .flee(true);
+
+    return search_many(creep, find_item_list, option)
+}
+
+
+pub fn find_nearest_enemy(creep: &screeps::objects::Creep, range:u32) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(HOSTILE_CREEPS);
+
+    let mut find_item_list = Vec::<(screeps::objects::Creep, u32)>::new() ;
+
+    for chk_item in item_list.iter() {
+        find_item_list.push((chk_item.clone(), range));     
     }
 
     let option = SearchOptions::new()

@@ -9,6 +9,9 @@ use screeps::constants::find::*;
 use lazy_static::* ;
 
 
+
+
+
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= 15 {
         return;
@@ -19,6 +22,11 @@ pub fn do_spawn() {
     let num_harvester:i32 = screeps::memory::root().i32("num_harvester").unwrap_or(Some(0)).unwrap_or(0);    
     let num_harvester_spawn:i32 = screeps::memory::root().i32("num_harvester_spawn").unwrap_or(Some(0)).unwrap_or(0);   
     let num_repairer:i32 = screeps::memory::root().i32("num_repairer").unwrap_or(Some(0)).unwrap_or(0);   
+
+    let opt_num_attackable_short:i32 = screeps::memory::root().i32("opt_num_attackable_short").unwrap_or(Some(0)).unwrap_or(0);   
+    let opt_num_attackable_long:i32 = screeps::memory::root().i32("opt_num_attackable_long").unwrap_or(Some(0)).unwrap_or(0);   
+
+    let num_total_creep = screeps::game::creeps::values().len() as i32;
 
     for spawn in screeps::game::spawns::values() {
         info!("running spawn {}", spawn.name());
@@ -46,19 +54,54 @@ pub fn do_spawn() {
         }
 
         let body_unit = [Part::Move, Part::Move, Part::Carry, Part::Work];
-        let body_cost: u32 = body_unit.iter().map(|p| p.cost()).sum() ;
+        let body_short_atk_unit = [Part::Move, Part::Attack];
+        let body_long_atk_unit = [Part::Move, Part::RangedAttack];
 
-        let mut set_num = sum_energy / body_cost ;
+        let body_cost: u32 = body_unit.iter().map(|p| p.cost()).sum() ;
+        let body_short_atk_cost: u32 = body_short_atk_unit.iter().map(|p| p.cost()).sum() ;
+        let body_long_atk_cost: u32 = body_long_atk_unit.iter().map(|p| p.cost()).sum() ;
+
+        let body_cost_vec = vec![body_cost, body_short_atk_cost, body_long_atk_cost];
+        let min_cost = body_cost_vec.iter().min().unwrap() ;
+
         let mut body = Vec::new() ;
 
-        debug!("spawn calc sum_energy:{:?}, body_cost:{:?}, set_num:{:?}", sum_energy, body_cost, set_num);
+        debug!("spawn calc sum_energy:{:?}", sum_energy);
+
+        // とりあえず基本セットをつける.
+        if sum_energy >= body_cost {
+            body.extend(body_unit.iter().cloned());
+            sum_energy -= body_cost;
+        } else {
+            // 基本セット分だけEnergyがたまってなければまた次回.
+            return ;
+        }
+
+        // 長距離攻撃がたりなければ装備.
+        if opt_num_attackable_long < std::cmp::max(1, num_total_creep/5) {
+
+            if sum_energy >= body_long_atk_cost {
+                body.extend(body_long_atk_unit.iter().cloned());
+                sum_energy -= body_long_atk_cost; 
+            }
+
+        // 短距離攻撃が足りなければ装備.           
+        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep/5) {
+            if sum_energy >= body_short_atk_cost {
+                body.extend(body_short_atk_unit.iter().cloned());
+                sum_energy -= body_short_atk_cost; 
+            }
+        }
+
+        // あとは可能な限り基本セット.
+        let mut set_num = sum_energy / body_cost ;
 
         while set_num > 0 {
             body.extend(body_unit.iter().cloned());
             set_num -= 1 ;
         }
 
-        if sum_energy >= body.iter().map(|p| p.cost()).sum() {
+        if body.len() > 0 {
             // create a unique name, spawn.
             let name_base = screeps::game::time();
             let mut additional = 0;

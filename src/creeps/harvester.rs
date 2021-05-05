@@ -6,7 +6,7 @@ use screeps::constants::find::*;
 use crate::util::*;
 
 
-pub fn run_harvester(creep:Creep){
+pub fn run_harvester(creep:&Creep){
     let name = creep.name();
     info!("running harvester {}", creep.name());
 
@@ -87,7 +87,7 @@ pub fn run_harvester(creep:Creep){
     }
 }
 
-pub fn run_harvester_spawn(creep:Creep){
+pub fn run_harvester_spawn(creep:&Creep){
 
     let name = creep.name();
     info!("running harvester_spawn {}", creep.name());
@@ -118,5 +118,8 @@ pub fn run_harvester_spawn(creep:Creep){
         if res != ReturnCode::Ok {
             warn!("couldn't move to transfer: {:?}", res);
         }
+    } else {
+        // act as normal harvester.
+        run_harvester(creep);
     }
 }

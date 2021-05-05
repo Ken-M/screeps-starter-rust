@@ -4,7 +4,7 @@ use screeps::constants::find::*;
 use crate::util::*;
 
 
-pub fn run_repairer(creep:Creep){
+pub fn run_repairer(creep:&Creep){
 
     let name = creep.name();
     info!("running repairer {}", creep.name());
