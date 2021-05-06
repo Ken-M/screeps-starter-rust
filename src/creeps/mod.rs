@@ -19,8 +19,8 @@ enum AttackerKind {
 
 
 fn reset_source_target(creep: &Creep) -> Position {
+
     let res = find_nearest_active_source(&creep);
-    let mut ret_position ;
 
     if res.load_local_path().len() > 0 {
 
@@ -29,13 +29,12 @@ fn reset_source_target(creep: &Creep) -> Position {
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
 
-        ret_position = last_pos.clone() ;
         debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
+        return last_pos.clone() ;        
     } else {
-        ret_position = creep.pos() ;
-    }       
-    
-    return ret_position ;
+        //全部ダメならとりあえずその場待機.
+        return creep.pos() ;
+    }          
 }
 
 
@@ -178,7 +177,7 @@ pub fn creep_loop() {
                     creep.memory().set("role", "harvester_spawn");
                     num_harvester_spawn += 1 ;
                     role_string = String::from("harvester_spawn") ;
-                } else if num_upgrader <= (screeps::game::creeps::values().len() as i32 / 4) {
+                } else if num_upgrader <= (screeps::game::creeps::values().len() as i32 / 5)+1 {
                     creep.memory().set("role", "upgrader");
                     num_upgrader += 1 ;
                     role_string = String::from("upgrader") ;
@@ -186,7 +185,7 @@ pub fn creep_loop() {
                     creep.memory().set("role", "builder");
                     num_builder += 1;
                     role_string = String::from("builder") ;        
-                } else if num_repairer <= (screeps::game::creeps::values().len() as i32 / 10) {
+                } else if num_repairer <= (screeps::game::creeps::values().len() as i32 / 5) {
                     creep.memory().set("role", "repairer");
                     num_repairer += 1;
                     role_string = String::from("repairer") ;      
@@ -279,23 +278,44 @@ pub fn creep_loop() {
                 }
             }
 
-            let sources = &creep
+            let mut is_harvested = false;
+
+            let resources = &creep
             .room()
             .expect("room is not visible to you")
-            .find(find::SOURCES_ACTIVE);        
-
-            let mut is_harvested = false;
-        
-            for source in sources.iter() {
-                if creep.pos().is_near_to(source) {
-                    let r = creep.harvest(source);
+            .find(find::DROPPED_RESOURCES);
+            
+            for resource in resources.iter() {
+                if creep.pos().is_near_to(resource) 
+                    && resource.resource_type() == ResourceType::Energy {
+                    let r = creep.pickup(resource);
                     if r != ReturnCode::Ok {
-                        warn!("couldn't harvest: {:?}", r);
+                        warn!("couldn't pick-up: {:?}", r);
                         continue;
                     }
                     is_harvested = true;
                     break;
                 } 
+            }             
+            
+            if is_harvested == false {
+
+                let sources = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(find::SOURCES_ACTIVE);
+
+                for source in sources.iter() {
+                    if creep.pos().is_near_to(source) {
+                        let r = creep.harvest(source);
+                        if r != ReturnCode::Ok {
+                            warn!("couldn't harvest: {:?}", r);
+                            continue;
+                        }
+                        is_harvested = true;
+                        break;
+                    } 
+                }
             }
 
             if is_harvested == false {
@@ -304,6 +324,20 @@ pub fn creep_loop() {
                     debug!("already arrived, but can't harvest!!!");
                     creep.memory().del("target_pos");
                 } else {
+
+                    //落ちているenergyがあれば優先させる.
+                    let res = find_nearest_dropped_energy(&creep);
+                    if res.load_local_path().len() > 0 {
+
+                        info!("pick-up : {:?}", res.load_local_path());
+
+                        let res = creep.move_by_path_search_result(&res);         
+
+                        if res == ReturnCode::Ok {
+                            continue;
+                        }                               
+                    }
+
                     let res = creep.move_to(&defined_target_pos);           
 
                     if res != ReturnCode::Ok {

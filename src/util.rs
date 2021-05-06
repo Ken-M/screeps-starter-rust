@@ -2,7 +2,7 @@ use log::*;
 use screeps::{ConstructionSite, FindOptions, RoomObjectProperties, RoomPosition, Source, Structure, StructureProperties, pathfinder::*, LookResult};
 use screeps::constants::find::*;
 use screeps::constants::*;
-use screeps::objects::HasPosition ;
+use screeps::objects::{HasPosition, Resource} ;
 use screeps::local::RoomName ;
 use std::collections::HashMap;
 
@@ -338,6 +338,29 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep) -> screeps::p
 
     for chk_item in item_list.iter() {
         find_item_list.push((chk_item.clone(), 1));     
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_dropped_energy(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(DROPPED_RESOURCES);
+
+    let mut find_item_list = Vec::<(Resource, u32)>::new() ;
+
+    for chk_item in item_list.iter() {
+        if chk_item.resource_type() == ResourceType::Energy {
+            find_item_list.push((chk_item.clone(), 1));     
+        }
     }
 
     let option = SearchOptions::new()
