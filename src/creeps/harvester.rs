@@ -79,8 +79,7 @@ pub fn run_harvester(creep:&Creep){
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
-        let last_pos = *(res.load_local_path().last().unwrap());
-        let res = creep.move_to(&last_pos); 
+        let res = creep.move_by_path_search_result(&res); 
         if res != ReturnCode::Ok {
             warn!("couldn't move to transfer: {:?}", res);
         }
@@ -113,8 +112,7 @@ pub fn run_harvester_spawn(creep:&Creep){
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
-        let last_pos = *(res.load_local_path().last().unwrap());
-        let res = creep.move_to(&last_pos); 
+        let res = creep.move_by_path_search_result(&res); 
         if res == ReturnCode::Ok {
             return ;
         }
@@ -177,8 +175,7 @@ pub fn run_harvester_spawn(creep:&Creep){
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
-        let last_pos = *(res.load_local_path().last().unwrap());
-        let res = creep.move_to(&last_pos); 
+        let res = creep.move_by_path_search_result(&res); 
         if res == ReturnCode::Ok {
             return ;
         }

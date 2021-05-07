@@ -24,9 +24,10 @@ pub fn run_builder(creep:&Creep){
     }
 
     let res = find_nearest_construction_site(&creep);
+    debug!("go to:{:?}", res.load_local_path());
+
     if res.load_local_path().len() > 0 {
-        let last_pos = *(res.load_local_path().last().unwrap());
-        let res = creep.move_to(&last_pos); 
+        let res = creep.move_by_path_search_result(&res); 
         if res != ReturnCode::Ok {
             warn!("couldn't move to build: {:?}", res);
         }

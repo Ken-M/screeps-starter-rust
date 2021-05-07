@@ -19,10 +19,14 @@ pub fn run_upgrader(creep:&Creep){
         let r = creep.upgrade_controller(&c);
         
         if r == ReturnCode::NotInRange {
-            let res = creep.move_to(&c);
 
-            if res != ReturnCode::Ok {
-                warn!("couldn't move to upgrade: {:?}", res);
+            let res = find_path(&creep, &c.pos(), 1);
+
+            if res.load_local_path().len() > 0 {
+                let res = creep.move_by_path_search_result(&res); 
+                if res != ReturnCode::Ok {
+                    warn!("couldn't move to upgrade: {:?}", res);
+                }
             }
         } else if r != ReturnCode::Ok {
             warn!("couldn't upgrade: {:?}", r);

@@ -121,7 +121,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static>
                             let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8) ;
                             // すでに通行不可としてマークされているマスは触らない.
                             if cur_cost < 0xff {
-                                let new_cost = cur_cost + 20;
+                                let new_cost = cur_cost + 50;
                                 cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost) ;
                             }
                         }
@@ -466,4 +466,14 @@ pub fn find_nearest_enemy(creep: &screeps::objects::Creep, range:u32) -> screeps
     .swamp_cost(10);
 
     return search_many(creep, find_item_list, option)
+}
+
+pub fn find_path(creep: &screeps::objects::Creep, target_pos:&RoomPosition, range:u32) -> screeps::pathfinder::SearchResults
+{
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search(creep, target_pos, range, option) ;
 }
