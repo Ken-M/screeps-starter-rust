@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 
 use log::*;
-use screeps::{Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, Transferable, find, pathfinder::SearchResults, prelude::*};
+use screeps::{Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, StructureType, Transferable, find, pathfinder::SearchResults, prelude::*};
 use screeps::constants::find::*;
 use crate::util::*;
 
@@ -109,17 +109,81 @@ pub fn run_harvester_spawn(creep:&Creep){
         }
     }
 
-    let res = find_nearest_spawn(&creep);
+    let res = find_nearest_transferable_structure(&creep, StructureType::Spawn);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
         let last_pos = *(res.load_local_path().last().unwrap());
         let res = creep.move_to(&last_pos); 
-        if res != ReturnCode::Ok {
-            warn!("couldn't move to transfer: {:?}", res);
+        if res == ReturnCode::Ok {
+            return ;
         }
-    } else {
-        // act as normal harvester.
-        run_harvester(creep);
     }
+
+    debug!("check towers {}", name);
+
+    let my_towers = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    for my_tower in my_towers.iter() {
+    
+        if my_tower.structure_type() == StructureType::Tower {
+
+            debug!("try transfer to tower {}", name);
+            match my_tower.as_owned() {     
+                Some(my_structure) => {
+        
+                    if my_structure.my() == true {
+        
+                        match my_tower.as_transferable() {
+                            Some(transf) => {
+            
+                                match my_tower.as_has_store() {
+                                    Some(has_store) => {
+            
+                                        if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0  {
+                                            let r = creep.transfer_all(transf, ResourceType::Energy);
+
+                                            if r == ReturnCode::Ok {
+                                                info!("transferd to tower!!");
+                                                return ;
+                                            }
+                                        }
+                                    }
+            
+                                    None => {
+                                        //no store.
+                                    }
+                                }
+                            }
+            
+                            None => {
+                                // my_struct is not transferable
+                            }
+                        }            
+                    }
+                }
+        
+                None => {
+                    //not my structure.
+                }
+            }
+        }
+    }
+
+    let res = find_nearest_transferable_structure(&creep, StructureType::Tower);
+    debug!("go to:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let last_pos = *(res.load_local_path().last().unwrap());
+        let res = creep.move_to(&last_pos); 
+        if res == ReturnCode::Ok {
+            return ;
+        }
+    } 
+
+    // act as normal harvester.
+    run_harvester(creep);
 }

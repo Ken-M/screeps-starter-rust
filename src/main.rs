@@ -43,6 +43,8 @@ fn main() {
 fn game_loop() {
     info!("loop starting! CPU: {}", screeps::game::cpu::get_used());
 
+    util::clear_init_flag();
+
     info!("running spawns");
     create::spawn::do_spawn();
 
