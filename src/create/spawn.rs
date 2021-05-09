@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, usize};
 
 use log::*;
 use screeps::{IntoExpectedType, Part, ResourceType, ReturnCode, RoomObjectProperties, StructureType, find, prelude::*};
@@ -96,7 +96,7 @@ pub fn do_spawn() {
         // あとは可能な限り基本セット.
         let mut set_num = sum_energy / body_cost ;
 
-        while set_num > 0 {
+        while (set_num > 0) && ((body.len() + body_unit.len()) < screeps::constants::MAX_CREEP_SIZE as usize) {
             body.extend(body_unit.iter().cloned());
             set_num -= 1 ;
         }

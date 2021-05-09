@@ -400,6 +400,27 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep) -> screeps::p
     return search_many(creep, find_item_list, option)
 }
 
+pub fn find_nearest_source(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(SOURCES);
+
+    let mut find_item_list = Vec::<(Source, u32)>::new() ;
+
+    for chk_item in item_list.iter() {
+        find_item_list.push((chk_item.clone(), 1));     
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
 pub fn find_nearest_dropped_energy(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
 {
     let item_list = &creep

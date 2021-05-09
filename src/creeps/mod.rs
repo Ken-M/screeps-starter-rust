@@ -34,6 +34,21 @@ fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
         let ret_position = res.load_local_path().last().unwrap().clone() ;
         return (res, ret_position) ;        
     } else {
+
+        let res = find_nearest_source(&creep);
+
+        if res.load_local_path().len() > 0 {
+
+            let last_pos = *(res.load_local_path().last().unwrap());
+            let json_str = serde_json::to_string(&last_pos).unwrap();
+            creep.memory().set("target_pos", json_str);
+    
+            debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
+    
+            let ret_position = res.load_local_path().last().unwrap().clone() ;
+            return (res, ret_position) ;   
+        }
+
         //全部ダメならとりあえずその場待機.
         let res = find_path(&creep, &creep.pos(), 0);
         return (res, creep.pos().clone()) ;  
