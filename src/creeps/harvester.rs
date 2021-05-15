@@ -75,7 +75,7 @@ pub fn run_harvester(creep:&Creep){
         }
     }
 
-    let res = find_nearest_transfarable_item(&creep);
+    let res = find_nearest_transfarable_item(&creep, ResourceType::Energy);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -108,7 +108,7 @@ pub fn run_harvester_spawn(creep:&Creep){
         }
     }
 
-    let res = find_nearest_transferable_structure(&creep, StructureType::Spawn);
+    let res = find_nearest_transferable_structure(&creep, StructureType::Spawn, ResourceType::Energy);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -171,7 +171,7 @@ pub fn run_harvester_spawn(creep:&Creep){
         }
     }
 
-    let res = find_nearest_transferable_structure(&creep, StructureType::Tower);
+    let res = find_nearest_transferable_structure(&creep, StructureType::Tower, ResourceType::Energy);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {

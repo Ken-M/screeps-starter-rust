@@ -118,7 +118,7 @@ pub fn do_spawn() {
             };
 
             if res != ReturnCode::Ok {
-                warn!("couldn't spawn: {:?}", res);
+                info!("couldn't spawn: {:?}", res);
             }
             if res == ReturnCode::Ok {
                 info!("spawn: {:?}", body);

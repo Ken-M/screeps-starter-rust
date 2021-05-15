@@ -20,7 +20,7 @@ enum AttackerKind {
 
 fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
     debug!("harvesting : reset_source_target");
-    let res = find_nearest_active_source(&creep);
+    let res = find_nearest_active_source(&creep, ResourceKind::ENERGY);
     debug!("harvesting : find_nearest_active_source result:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -28,13 +28,31 @@ fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
         let last_pos = *(res.load_local_path().last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
+        creep.memory().set("target_pos_count", 20);
 
         debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
 
         let ret_position = res.load_local_path().last().unwrap().clone() ;
         return (res, ret_position) ;        
     } else {
+        // storageをチェック.
+        let res = find_nearest_stored_energy_source(&creep);
 
+        if res.load_local_path().len() > 0 {
+
+            let last_pos = *(res.load_local_path().last().unwrap());
+            let json_str = serde_json::to_string(&last_pos).unwrap();
+            creep.memory().set("target_pos", json_str);
+            creep.memory().set("target_pos_count", 10);
+    
+            debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
+    
+            let ret_position = res.load_local_path().last().unwrap().clone() ;
+            return (res, ret_position) ;   
+
+        }
+
+        //　やむなく枯渇sourceを選ぶ.
         let res = find_nearest_source(&creep);
 
         if res.load_local_path().len() > 0 {
@@ -42,6 +60,7 @@ fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
             let last_pos = *(res.load_local_path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
+            creep.memory().set("target_pos_count", 5);
     
             debug!("harvesting : target_pos:{:?}", creep.memory().string("target_pos"));
     
@@ -52,6 +71,7 @@ fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
         //全部ダメならとりあえずその場待機.
         let res = find_path(&creep, &creep.pos(), 0);
         return (res, creep.pos().clone()) ;  
+
     }          
 }
 
@@ -301,7 +321,7 @@ pub fn creep_loop() {
         if creep.memory().bool("harvesting") {
             debug!("harvesting {}", name);
 
-            let check_string = creep.memory().string("target_pos");      
+            let check_string = creep.memory().string("target_pos"); 
             debug!("harvesting string{:?}", check_string); 
 
             let mut defined_target_pos = creep.pos() ;
@@ -363,6 +383,7 @@ pub fn creep_loop() {
 
             let mut is_harvested = false;
 
+            // check dropped source.
             let resources = &creep
             .room()
             .expect("room is not visible to you")
@@ -379,8 +400,51 @@ pub fn creep_loop() {
                     is_harvested = true;
                     break;
                 } 
-            }             
+            }     
             
+            // check ruins.
+            if is_harvested == false {
+
+                let ruins = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(find::RUINS);
+
+                for ruin in ruins.iter() {
+                    if creep.pos().is_near_to(ruin) {
+                        let r = creep.withdraw_all(ruin, ResourceType::Energy);
+                        if r != ReturnCode::Ok {
+                            warn!("couldn't harvest: {:?}", r);
+                            continue;
+                        }
+                        is_harvested = true;
+                        break;
+                    } 
+                }
+            }
+
+            // check tombstones.
+            if is_harvested == false {
+
+                let tombstones = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(find::TOMBSTONES);
+
+                for tobstone in tombstones.iter() {
+                    if creep.pos().is_near_to(tobstone) {
+                        let r = creep.withdraw_all(tobstone, ResourceType::Energy);
+                        if r != ReturnCode::Ok {
+                            warn!("couldn't harvest: {:?}", r);
+                            continue;
+                        }
+                        is_harvested = true;
+                        break;
+                    } 
+                }
+            }
+            
+            //  check sources active.
             if is_harvested == false {
 
                 let sources = &creep
@@ -407,20 +471,6 @@ pub fn creep_loop() {
                     debug!("already arrived, but can't harvest!!!");
                     creep.memory().del("target_pos");
                 } else {
-
-                    //落ちているenergyがあれば優先させる.
-                    let res = find_nearest_dropped_energy(&creep);
-                    if res.load_local_path().len() > 0 {
-
-                        info!("pick-up : {:?}", res.load_local_path());
-
-                        let res = creep.move_by_path_search_result(&res);         
-
-                        if res == ReturnCode::Ok {
-                            continue;
-                        }                               
-                    }
-
                     let res = creep.move_by_path_search_result(&path_search_result);           
 
                     if res != ReturnCode::Ok {
@@ -429,6 +479,15 @@ pub fn creep_loop() {
                             creep.memory().del("target_pos");
                         }
                     }
+                }
+
+                let mut target_pos_count =  creep.memory().i32("target_pos_count").unwrap_or(Some(10)).unwrap_or(10); 
+                target_pos_count -= 1 ;
+                if target_pos_count <=0 {
+                    creep.memory().del("target_pos");
+                    creep.memory().del("target_pos_count");
+                } else {
+                    creep.memory().set("target_pos_count", target_pos_count);
                 }
             }
 
