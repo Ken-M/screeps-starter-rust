@@ -4,8 +4,9 @@ mod upgrader;
 mod repairer;
 
 use log::*;
-use screeps::{Creep, LookConstant, Part, Position, ResourceType, ReturnCode, RoomObjectProperties, find, look::CREEPS, pathfinder::SearchResults, prelude::*};
+use screeps::{Creep, LookConstant, Part, Position, ResourceType, ReturnCode, RoomObjectProperties, StructureType, find, look::CREEPS, pathfinder::SearchResults, prelude::*, resource};
 use screeps::constants::find::*;
+use screeps::Structure;
 use crate::util::*;
 
 use stdweb::serde ;
@@ -18,9 +19,9 @@ enum AttackerKind {
 }
 
 
-fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
+fn reset_source_target(creep: &Creep, harvest_kind:&ResourceKind) -> (SearchResults, Position) {
     debug!("harvesting : reset_source_target");
-    let res = find_nearest_active_source(&creep, ResourceKind::ENERGY);
+    let res = find_nearest_active_source(&creep, harvest_kind);
     debug!("harvesting : find_nearest_active_source result:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -36,7 +37,7 @@ fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
         return (res, ret_position) ;        
     } else {
         // storageをチェック.
-        let res = find_nearest_stored_energy_source(&creep);
+        let res = find_nearest_stored_source(&creep, harvest_kind);
 
         if res.load_local_path().len() > 0 {
 
@@ -53,7 +54,7 @@ fn reset_source_target(creep: &Creep) -> (SearchResults, Position) {
         }
 
         //　やむなく枯渇sourceを選ぶ.
-        let res = find_nearest_source(&creep);
+        let res = find_nearest_source(&creep, harvest_kind);
 
         if res.load_local_path().len() > 0 {
 
@@ -181,6 +182,7 @@ pub fn creep_loop() {
     let mut num_harvester:i32 = 0 ;
     let mut num_upgrader:i32 = 0 ;
     let mut num_harvester_spawn:i32 = 0;
+    let mut num_harvester_mineral:i32 = 0;
     let mut num_repairer:i32 = 0 ;
 
     let mut opt_num_attackable_short:i32 = 0;
@@ -225,6 +227,10 @@ pub fn creep_loop() {
                 num_harvester_spawn += 1;
             }
 
+            "harvester_mineral" => {
+                num_harvester_mineral += 1;
+            }
+
             "builder" => {
                 num_builder += 1;
             }
@@ -256,6 +262,7 @@ pub fn creep_loop() {
         let mut role_string =  String::from("none");
 
         let role_and_attacker_kind = get_role_and_attacker_kind(&creep) ;
+        let mut harvest_kind : ResourceKind = ResourceKind::ENERGY ;
 
         role_string = role_and_attacker_kind.0 ;
         attacker_kind = role_and_attacker_kind.1 ;
@@ -278,7 +285,12 @@ pub fn creep_loop() {
                 } else if num_repairer < (screeps::game::creeps::values().len() as i32 / 5) {
                     creep.memory().set("role", "repairer");
                     num_repairer += 1;
-                    role_string = String::from("repairer") ;      
+                    role_string = String::from("repairer") ;     
+                } else if num_harvester_mineral < (screeps::game::creeps::values().len() as i32 / 10) {
+                    creep.memory().set("role", "harvester_mineral");
+                    num_harvester_mineral += 1;
+                    harvest_kind = ResourceKind::MINELALS ;
+                    role_string = String::from("harvester_mineral") ;  
                 } else {
                     creep.memory().set("role", "harvester");
                     num_harvester += 1;     
@@ -306,8 +318,13 @@ pub fn creep_loop() {
             }
         }
 
+        //// harvest resrouce kind.
+        if role_string == String::from("harvester_mineral") {
+            harvest_kind = ResourceKind::MINELALS ;
+        }
+
         if creep.memory().bool("harvesting") {
-            if creep.store_free_capacity(Some(ResourceType::Energy)) == 0 {
+            if creep.store_free_capacity(None) == 0 {
                 creep.memory().set("harvesting", false);
                 creep.memory().del("target_pos");
             }
@@ -315,6 +332,7 @@ pub fn creep_loop() {
             if creep.store_used_capacity(None) == 0 {
                 creep.memory().set("harvesting", true);
                 creep.memory().del("target_pos");
+                creep.memory().del("harvested_from_storage"); 
             }
         }
 
@@ -349,7 +367,7 @@ pub fn creep_loop() {
                                         debug!("re-check source :{}", defined_target_pos);
                                         creep.memory().del("target_pos");
 
-                                        let reset_result = reset_source_target(&creep) ;
+                                        let reset_result = reset_source_target(&creep, &harvest_kind) ;
                                         path_search_result = reset_result.0 ;
                                         defined_target_pos = reset_result.1 ;
                                     }
@@ -357,7 +375,7 @@ pub fn creep_loop() {
 
                                 Err(err) => {
                                     //ロードに成功して値もあったけどDeSerializeできなかった.
-                                    let reset_result = reset_source_target(&creep) ;
+                                    let reset_result = reset_source_target(&creep, &harvest_kind) ;
                                     path_search_result = reset_result.0 ;
                                     defined_target_pos = reset_result.1 ;
                                 }
@@ -366,7 +384,7 @@ pub fn creep_loop() {
         
                         None => {
                             //ロードに成功したけど値がない.
-                            let reset_result = reset_source_target(&creep) ;
+                            let reset_result = reset_source_target(&creep, &harvest_kind) ;
                             path_search_result = reset_result.0 ;
                             defined_target_pos = reset_result.1 ;                      
                         }
@@ -375,7 +393,7 @@ pub fn creep_loop() {
 
                 //ロードに失敗(key自体がない).
                 Err(err) => {
-                    let reset_result = reset_source_target(&creep) ;
+                    let reset_result = reset_source_target(&creep, &harvest_kind) ;
                     path_search_result = reset_result.0 ;
                     defined_target_pos = reset_result.1 ;          
                 }
@@ -391,7 +409,7 @@ pub fn creep_loop() {
             
             for resource in resources.iter() {
                 if creep.pos().is_near_to(resource) 
-                    && resource.resource_type() == ResourceType::Energy {
+                    && check_resouce_type_kind_matching(&resource.resource_type(), &harvest_kind) {
                     let r = creep.pickup(resource);
                     if r != ReturnCode::Ok {
                         warn!("couldn't pick-up: {:?}", r);
@@ -412,14 +430,21 @@ pub fn creep_loop() {
 
                 for ruin in ruins.iter() {
                     if creep.pos().is_near_to(ruin) {
-                        let r = creep.withdraw_all(ruin, ResourceType::Energy);
-                        if r != ReturnCode::Ok {
-                            warn!("couldn't harvest: {:?}", r);
-                            continue;
+                        let resource_type_list = make_resoucetype_list(&harvest_kind) ;
+                        for resource_type in resource_type_list {
+                            let r = creep.withdraw_all(ruin, resource_type);
+                            if r != ReturnCode::Ok {
+                                warn!("couldn't withdraw: {:?}", r);
+                                continue;
+                            }
+                            is_harvested = true;
+                            break;
                         }
-                        is_harvested = true;
+                    }
+                    
+                    if is_harvested == true {
                         break;
-                    } 
+                    }
                 }
             }
 
@@ -433,19 +458,26 @@ pub fn creep_loop() {
 
                 for tobstone in tombstones.iter() {
                     if creep.pos().is_near_to(tobstone) {
-                        let r = creep.withdraw_all(tobstone, ResourceType::Energy);
-                        if r != ReturnCode::Ok {
-                            warn!("couldn't harvest: {:?}", r);
-                            continue;
+                        let resource_type_list = make_resoucetype_list(&harvest_kind) ;
+                        for resource_type in resource_type_list {
+                            let r = creep.withdraw_all(tobstone, resource_type);
+                            if r != ReturnCode::Ok {
+                                warn!("couldn't withdraw: {:?}", r);
+                                continue;
+                            }
+                            is_harvested = true;
+                            break;
                         }
-                        is_harvested = true;
-                        break;
                     } 
+
+                    if is_harvested == true {
+                        break;
+                    }
                 }
             }
             
             //  check sources active.
-            if is_harvested == false {
+            if is_harvested == false && harvest_kind == ResourceKind::ENERGY {
 
                 let sources = &creep
                 .room()
@@ -462,6 +494,79 @@ pub fn creep_loop() {
                         is_harvested = true;
                         break;
                     } 
+                }
+            }
+
+            if is_harvested == false && harvest_kind == ResourceKind::MINELALS {
+
+                let sources = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(find::MINERALS);
+
+                for source in sources.iter() {
+                    if creep.pos().is_near_to(source) {
+                        let r = creep.harvest(source);
+                        if r != ReturnCode::Ok {
+                            warn!("couldn't harvest: {:?}", r);
+                            continue;
+                        }
+                        is_harvested = true;
+                        break;
+                    } 
+                }
+
+            }
+
+            //  storage.
+            if is_harvested == false {
+
+                let structures = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(find::STRUCTURES);
+
+                for structure in structures.iter() {
+                    let resource_type_list = make_resoucetype_list(&harvest_kind) ;
+                    for resource_type in resource_type_list {
+
+                        if check_stored(structure, &resource_type) {
+                            if creep.pos().is_near_to(structure) {
+
+                                match structure {
+                                    Structure::Container(container) => {
+                                        let r = creep.withdraw_all(container, resource_type);
+                                        if r != ReturnCode::Ok {
+                                            warn!("couldn't withdraw: {:?}", r);
+                                            continue;
+                                        }
+                                        creep.memory().set("harvested_from_storage", true); 
+                                        is_harvested = true;
+                                        break;
+                                    }
+
+                                    Structure::Storage(storage) => {
+                                        let r = creep.withdraw_all(storage, resource_type);
+                                        if r != ReturnCode::Ok {
+                                            warn!("couldn't withdraw: {:?}", r);
+                                            continue;
+                                        }
+                                        creep.memory().set("harvested_from_storage", true); 
+                                        is_harvested = true;
+                                        break;                                 
+                                    }
+
+                                    _=>{
+                                        //do nothing
+                                    }
+                                }
+                            }
+                        } 
+                    }
+
+                    if is_harvested == true {
+                        break ;
+                    }
                 }
             }
 
@@ -533,6 +638,10 @@ pub fn creep_loop() {
                     harvester::run_harvester_spawn(&creep) ;
                 }
 
+                "harvester_mineral" => {
+                    harvester::run_harvester_mineral(&creep) ;
+                }
+
                 "builder" => {
                     builder::run_builder(&creep) ;
                 }
@@ -565,6 +674,7 @@ pub fn creep_loop() {
     screeps::memory::root().set("num_builder", num_builder);   
     screeps::memory::root().set("num_harvester", num_harvester);
     screeps::memory::root().set("num_harvester_spawn", num_harvester_spawn);
+    screeps::memory::root().set("num_harvester_mineral", num_harvester_mineral);
     screeps::memory::root().set("num_repairer", num_repairer);
 
     screeps::memory::root().set("opt_num_attackable_short", opt_num_attackable_short);

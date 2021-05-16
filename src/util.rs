@@ -214,7 +214,7 @@ pub fn check_my_structure(structure: &screeps::objects::Structure) -> bool
 
 
 
-pub fn check_transferable(structure: &screeps::objects::Structure, resource_type: ResourceType) -> bool
+pub fn check_transferable(structure: &screeps::objects::Structure, resource_type: &ResourceType) -> bool
 {
     match structure.as_owned() {     
         Some(my_structure) => {
@@ -229,7 +229,7 @@ pub fn check_transferable(structure: &screeps::objects::Structure, resource_type
                     match structure.as_has_store() {
                         Some(has_store) => {
 
-                            if has_store.store_free_capacity(Some(resource_type)) > 0  {
+                            if has_store.store_free_capacity(Some(*resource_type)) > 0  {
                                 return true;
                             }
                         }
@@ -295,12 +295,12 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool
     return false;
 }
 
-pub fn check_stored(structure: &screeps::objects::Structure, resource_type: ResourceType) -> bool {
+pub fn check_stored(structure: &screeps::objects::Structure, resource_type: &ResourceType) -> bool {
 
     match structure.as_has_store() {            
         Some(storage) => {
 
-            if storage.store_of(resource_type) > 0 {
+            if storage.store_of(*resource_type) > 0 {
                 return true ;
             }
         }
@@ -312,103 +312,7 @@ pub fn check_stored(structure: &screeps::objects::Structure, resource_type: Reso
     return false;
 }
 
-
-pub fn find_nearest_transfarable_item(creep: &screeps::objects::Creep, resource_type: ResourceType) -> screeps::pathfinder::SearchResults
-{
-    let item_list = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(STRUCTURES);
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
-
-    for chk_item in item_list {
-        if check_transferable(chk_item, resource_type) {
-            find_item_list.push((chk_item.clone(), 1));
-        }
-    }
-
-    let option = SearchOptions::new()
-    .room_callback(calc_room_cost)
-    .plain_cost(2)
-    .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option)
-}
-
-pub fn find_nearest_repairable_item(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
-{
-    let item_list = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(STRUCTURES);
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
-
-    for chk_item in item_list {
-        if check_repairable(chk_item) {
-            find_item_list.push((chk_item.clone(), 1));
-        }
-    }
-
-    let option = SearchOptions::new()
-    .room_callback(calc_room_cost)
-    .plain_cost(2)
-    .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option)
-}
-
-
-pub fn find_nearest_transferable_structure(creep: &screeps::objects::Creep, structure_type: StructureType, resource_type:ResourceType) -> screeps::pathfinder::SearchResults
-{
-    let item_list = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(STRUCTURES);
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
-
-    for chk_item in item_list {
-        if chk_item.structure_type() == structure_type {
-            if check_transferable(chk_item, resource_type) {
-                find_item_list.push((chk_item.clone(), 1));
-            }
-        }
-    }
-
-    let option = SearchOptions::new()
-    .room_callback(calc_room_cost)
-    .plain_cost(2)
-    .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option)
-}
-
-pub fn find_nearest_construction_site(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
-{
-    let item_list = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(MY_CONSTRUCTION_SITES);
-
-    let mut find_item_list = Vec::<(ConstructionSite, u32)>::new() ;
-
-    for chk_item in item_list.iter() {
-        find_item_list.push((chk_item.clone(), 1));
-    }
-
-    let option = SearchOptions::new()
-    .room_callback(calc_room_cost)
-    .plain_cost(2)
-    .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option)
-}
-
-pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind:ResourceKind) -> screeps::pathfinder::SearchResults
-{
-    let mut find_item_list = Vec::<(Position, u32)>::new() ;
+pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec::<ResourceType> {
 
     let mut resource_type_list = Vec::<ResourceType>::new() ;
 
@@ -515,7 +419,135 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
         }
     }
 
-    // dropped energy.
+    return resource_type_list ;
+}
+
+
+pub fn check_resouce_type_kind_matching(resource_type: &ResourceType, resource_kind: &ResourceKind) -> bool {
+    let resrouce_type_list = make_resoucetype_list(resource_kind);
+    for chk_resource_type in resrouce_type_list {
+
+        if *resource_type == chk_resource_type {
+            return true ;
+        }
+    }
+
+    return false ;
+}
+
+
+pub fn find_nearest_transfarable_item(creep: &screeps::objects::Creep, resource_kind: &ResourceKind, is_except_storages: &bool) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
+    let resource_type_list = make_resoucetype_list(resource_kind);
+
+    for chk_item in item_list {
+
+        if *is_except_storages == true &&
+            ( chk_item.structure_type() == StructureType::Container ||
+              chk_item.structure_type() == StructureType::Storage ) {
+            //前回storage系からresourceを調達している場合はもどさないようにする.
+
+            continue ;
+        }
+
+        for resource_type in resource_type_list.iter() {
+            if check_transferable(chk_item, resource_type) {
+                find_item_list.push((chk_item.clone(), 1));
+                break ;
+            }
+        }
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_repairable_item(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
+
+    for chk_item in item_list {
+        if check_repairable(chk_item) {
+            find_item_list.push((chk_item.clone(), 1));
+        }
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+
+pub fn find_nearest_transferable_structure(creep: &screeps::objects::Creep, structure_type: &StructureType, resource_type: &ResourceType) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
+
+    for chk_item in item_list {
+        if chk_item.structure_type() == *structure_type {
+            if check_transferable(chk_item, resource_type) {
+                find_item_list.push((chk_item.clone(), 1));
+            }
+        }
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_construction_site(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(MY_CONSTRUCTION_SITES);
+
+    let mut find_item_list = Vec::<(ConstructionSite, u32)>::new() ;
+
+    for chk_item in item_list.iter() {
+        find_item_list.push((chk_item.clone(), 1));
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind: &ResourceKind) -> screeps::pathfinder::SearchResults
+{
+    let mut find_item_list = Vec::<(Position, u32)>::new() ;
+    let resource_type_list = make_resoucetype_list(&resource_kind);
+
+    // dropped resource.
     let item_list = &creep
     .room()
     .expect("room is not visible to you")
@@ -578,7 +610,7 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
         }
     }  
 
-    if resource_kind == ResourceKind::ENERGY {
+    if *resource_kind == ResourceKind::ENERGY {
         // active source.
         let item_list = &creep
         .room()
@@ -593,7 +625,7 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
 
             find_item_list.push((object.clone(), 1));     
         }
-    } else if resource_kind == ResourceKind::MINELALS {
+    } else if *resource_kind == ResourceKind::MINELALS {
         // minerals.
         let item_list = &creep
         .room()
@@ -604,9 +636,11 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
             let mut object: Position = creep.pos() ;
             object.set_x(chk_item.pos().x()) ;
             object.set_y(chk_item.pos().y()) ;
-            object.set_room_name(chk_item.room().unwrap().name()) ;       
+            object.set_room_name(chk_item.room().unwrap().name()) ;     
+            
+            find_item_list.push((object.clone(), 1));     
         }    
-    } else if resource_kind == ResourceKind::COMMODITIES {
+    } else if *resource_kind == ResourceKind::COMMODITIES {
          // comodities.
          let item_list = &creep
          .room()
@@ -618,6 +652,8 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
              object.set_x(chk_item.pos().x()) ;
              object.set_y(chk_item.pos().y()) ;
              object.set_room_name(chk_item.room().unwrap().name()) ;   
+
+             find_item_list.push((object.clone(), 1));     
          }           
     } else {
           // comodities.
@@ -632,6 +668,8 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
                 object.set_x(chk_item.pos().x()) ;
                 object.set_y(chk_item.pos().y()) ;
                 object.set_room_name(chk_item.room().unwrap().name()) ;   
+
+                find_item_list.push((object.clone(), 1));     
               }
           }        
     }
@@ -646,9 +684,10 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
 
 
 
-pub fn find_nearest_stored_energy_source(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+pub fn find_nearest_stored_source(creep: &screeps::objects::Creep, resource_kind: &ResourceKind) -> screeps::pathfinder::SearchResults
 {
     let mut find_item_list = Vec::<(Position, u32)>::new() ;
+    let resource_type_list = make_resoucetype_list(&resource_kind);
 
     let item_list = &creep
     .room()
@@ -659,16 +698,19 @@ pub fn find_nearest_stored_energy_source(creep: &screeps::objects::Creep) -> scr
         if chk_item.structure_type() == StructureType::Container ||
            chk_item.structure_type() == StructureType::Storage {
 
-            if  check_my_structure(chk_item) &&
-                check_stored(chk_item, ResourceType::Energy) {
+            if  check_my_structure(chk_item) {
+                for resource_type in resource_type_list.iter() {
+                    if check_stored(chk_item, resource_type) {
+                        let mut object: Position = creep.pos() ;
+                        object.set_x(chk_item.pos().x()) ;
+                        object.set_y(chk_item.pos().y()) ;
+                        object.set_room_name(chk_item.room().unwrap().name()) ;
 
-                let mut object: Position = creep.pos() ;
-                object.set_x(chk_item.pos().x()) ;
-                object.set_y(chk_item.pos().y()) ;
-                object.set_room_name(chk_item.room().unwrap().name()) ;
-
-                find_item_list.push((object.clone(), 1));  
-            }   
+                        find_item_list.push((object.clone(), 1));  
+                        break;
+                    } 
+                }
+            }
         }
     }
 
@@ -680,17 +722,59 @@ pub fn find_nearest_stored_energy_source(creep: &screeps::objects::Creep) -> scr
     return search_many(creep, find_item_list, option)
 }
 
-pub fn find_nearest_source(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+pub fn find_nearest_source(creep: &screeps::objects::Creep, harvest_kind: &ResourceKind) -> screeps::pathfinder::SearchResults
 {
-    let item_list = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(SOURCES);
+    let mut find_item_list = Vec::<(Position, u32)>::new() ;
 
-    let mut find_item_list = Vec::<(Source, u32)>::new() ;
+    match harvest_kind {
+        ResourceKind::ENERGY => {
+            let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(find::SOURCES);
+        
+            for chk_item in item_list.iter() {
 
-    for chk_item in item_list.iter() {
-        find_item_list.push((chk_item.clone(), 1));     
+                let mut object: Position = creep.pos() ;
+                object.set_x(chk_item.pos().x()) ;
+                object.set_y(chk_item.pos().y()) ;
+                object.set_room_name(chk_item.room().unwrap().name()) ;   
+
+                find_item_list.push((object.clone(), 1));      
+            }
+        }
+
+        ResourceKind::MINELALS => {
+            let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(find::MINERALS);
+        
+            for chk_item in item_list.iter() {
+                let mut object: Position = creep.pos() ;
+                object.set_x(chk_item.pos().x()) ;
+                object.set_y(chk_item.pos().y()) ;
+                object.set_room_name(chk_item.room().unwrap().name()) ;   
+
+                find_item_list.push((object.clone(), 1));      
+            }
+        }
+
+        _=>{
+            let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(find::SOURCES);
+        
+            for chk_item in item_list.iter() {
+                let mut object: Position = creep.pos() ;
+                object.set_x(chk_item.pos().x()) ;
+                object.set_y(chk_item.pos().y()) ;
+                object.set_room_name(chk_item.room().unwrap().name()) ;   
+
+                find_item_list.push((object.clone(), 1));      
+            }
+        }
     }
 
     let option = SearchOptions::new()
@@ -701,7 +785,7 @@ pub fn find_nearest_source(creep: &screeps::objects::Creep) -> screeps::pathfind
     return search_many(creep, find_item_list, option)
 }
 
-pub fn find_nearest_dropped_energy(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+pub fn find_nearest_dropped_resource(creep: &screeps::objects::Creep, resource_kind:ResourceKind) -> screeps::pathfinder::SearchResults
 {
     let item_list = &creep
     .room()
@@ -709,10 +793,14 @@ pub fn find_nearest_dropped_energy(creep: &screeps::objects::Creep) -> screeps::
     .find(DROPPED_RESOURCES);
 
     let mut find_item_list = Vec::<(Resource, u32)>::new() ;
+    let resource_type_list = make_resoucetype_list(&resource_kind);
 
     for chk_item in item_list.iter() {
-        if chk_item.resource_type() == ResourceType::Energy {
-            find_item_list.push((chk_item.clone(), 1));     
+        for resource_type in resource_type_list.iter() {
+            if chk_item.resource_type() == *resource_type {
+                find_item_list.push((chk_item.clone(), 1)); 
+                break ;    
+            }
         }
     }
 

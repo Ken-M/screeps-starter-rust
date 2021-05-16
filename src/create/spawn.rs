@@ -13,7 +13,7 @@ use lazy_static::* ;
 
 
 pub fn do_spawn() {
-    if screeps::game::creeps::values().len() >= 15 {
+    if screeps::game::creeps::values().len() >= 20 {
         return;
     }
    
@@ -21,6 +21,7 @@ pub fn do_spawn() {
     let num_builder:i32 = screeps::memory::root().i32("num_builder").unwrap_or(Some(0)).unwrap_or(0);
     let num_harvester:i32 = screeps::memory::root().i32("num_harvester").unwrap_or(Some(0)).unwrap_or(0);    
     let num_harvester_spawn:i32 = screeps::memory::root().i32("num_harvester_spawn").unwrap_or(Some(0)).unwrap_or(0);   
+    let num_harvester_mineral:i32 = screeps::memory::root().i32("num_harvester_mineral").unwrap_or(Some(0)).unwrap_or(0);   
     let num_repairer:i32 = screeps::memory::root().i32("num_repairer").unwrap_or(Some(0)).unwrap_or(0);   
 
     let opt_num_attackable_short:i32 = screeps::memory::root().i32("opt_num_attackable_short").unwrap_or(Some(0)).unwrap_or(0);   

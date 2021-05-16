@@ -27,12 +27,22 @@ pub fn run_harvester(creep:&Creep){
         }
     }
 
+    let is_harvested_from_storage = creep.memory().bool("harvested_from_storage"); 
+
     let structures = &creep
     .room()
     .expect("room is not visible to you")
     .find(STRUCTURES);
 
     for structure in structures.iter() {
+
+        if is_harvested_from_storage == true &&
+            ( structure.structure_type() == StructureType::Container ||
+                structure.structure_type() == StructureType::Storage ) {
+            //前回storage系からresourceを調達している場合はもどさないようにする.
+
+            continue ;
+        }
 
         match structure.as_owned() {            
             Some(my_structure) => {
@@ -75,7 +85,7 @@ pub fn run_harvester(creep:&Creep){
         }
     }
 
-    let res = find_nearest_transfarable_item(&creep, ResourceType::Energy);
+    let res = find_nearest_transfarable_item(&creep, &ResourceKind::ENERGY, &is_harvested_from_storage);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -108,7 +118,7 @@ pub fn run_harvester_spawn(creep:&Creep){
         }
     }
 
-    let res = find_nearest_transferable_structure(&creep, StructureType::Spawn, ResourceType::Energy);
+    let res = find_nearest_transferable_structure(&creep, &StructureType::Spawn, &ResourceType::Energy);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -171,7 +181,7 @@ pub fn run_harvester_spawn(creep:&Creep){
         }
     }
 
-    let res = find_nearest_transferable_structure(&creep, StructureType::Tower, ResourceType::Energy);
+    let res = find_nearest_transferable_structure(&creep, &StructureType::Tower, &ResourceType::Energy);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -183,4 +193,83 @@ pub fn run_harvester_spawn(creep:&Creep){
 
     // act as normal harvester.
     run_harvester(creep);
+}
+
+
+pub fn run_harvester_mineral(creep:&Creep){
+    let name = creep.name();
+    info!("running harvester mineral{}", creep.name());
+
+    let is_harvested_from_storage = creep.memory().bool("harvested_from_storage"); 
+
+    let structures = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    for structure in structures.iter() {
+
+        if is_harvested_from_storage == true &&
+            ( structure.structure_type() == StructureType::Container ||
+                structure.structure_type() == StructureType::Storage ) {
+            //前回storage系からresourceを調達している場合はもどさないようにする.
+
+            continue ;
+        }
+
+        match structure.as_owned() {            
+            Some(my_structure) => {
+
+                if my_structure.my() == false {
+                    continue ;
+                }
+
+                match structure.as_transferable() {
+                    Some(transf) => {
+            
+                        match structure.as_has_store() {
+                            Some(has_store) => {
+
+                                let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS) ;
+
+                                for resource_type in resrouce_type_list {
+            
+                                    if has_store.store_free_capacity(Some(resource_type)) > 0  {
+                                        let r = creep.transfer_all(transf, resource_type);
+
+                                        if r == ReturnCode::Ok {
+                                            info!("transferd to my_structure!!");
+                                            return ;
+                                        }
+                                    }
+                                }
+                            }
+            
+                            None => {
+                                //no store.
+                            }
+                        }
+                    }
+            
+                    None => {
+                        // my_struct is not transferable.
+                    }
+                }
+            }
+
+            None => {
+                //not mine.
+            }
+        }
+    }
+
+    let res = find_nearest_transfarable_item(&creep, &ResourceKind::MINELALS, &is_harvested_from_storage);
+    debug!("go to:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res); 
+        if res != ReturnCode::Ok {
+            warn!("couldn't move to transfer: {:?}", res);
+        }
+    }
 }
