@@ -91,7 +91,7 @@ pub fn run_harvester(creep:&Creep){
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res); 
         if res != ReturnCode::Ok {
-            warn!("couldn't move to transfer: {:?}", res);
+            info!("couldn't move to transfer: {:?}", res);
         }
     }
 }
@@ -269,7 +269,7 @@ pub fn run_harvester_mineral(creep:&Creep){
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res); 
         if res != ReturnCode::Ok {
-            warn!("couldn't move to transfer: {:?}", res);
+            info!("couldn't move to transfer: {:?}", res);
         }
     }
 }

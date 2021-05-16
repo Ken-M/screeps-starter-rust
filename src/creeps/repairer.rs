@@ -49,7 +49,7 @@ pub fn run_repairer(creep:&Creep){
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res); 
         if res != ReturnCode::Ok {
-            warn!("couldn't move to repair: {:?}", res);
+            info!("couldn't move to repair: {:?}", res);
         }
     }
 }

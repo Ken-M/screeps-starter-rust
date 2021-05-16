@@ -412,7 +412,7 @@ pub fn creep_loop() {
                     && check_resouce_type_kind_matching(&resource.resource_type(), &harvest_kind) {
                     let r = creep.pickup(resource);
                     if r != ReturnCode::Ok {
-                        warn!("couldn't pick-up: {:?}", r);
+                        warn!("couldn't pick-up dropped resrouces: {:?}", r);
                         continue;
                     }
                     is_harvested = true;
@@ -434,7 +434,7 @@ pub fn creep_loop() {
                         for resource_type in resource_type_list {
                             let r = creep.withdraw_all(ruin, resource_type);
                             if r != ReturnCode::Ok {
-                                warn!("couldn't withdraw: {:?}", r);
+                                warn!("couldn't withdraw from RUINs: {:?}", r);
                                 continue;
                             }
                             is_harvested = true;
@@ -462,7 +462,7 @@ pub fn creep_loop() {
                         for resource_type in resource_type_list {
                             let r = creep.withdraw_all(tobstone, resource_type);
                             if r != ReturnCode::Ok {
-                                warn!("couldn't withdraw: {:?}", r);
+                                warn!("couldn't withdraw from TOMBSTONES: {:?}", r);
                                 continue;
                             }
                             is_harvested = true;
@@ -488,7 +488,7 @@ pub fn creep_loop() {
                     if creep.pos().is_near_to(source) {
                         let r = creep.harvest(source);
                         if r != ReturnCode::Ok {
-                            warn!("couldn't harvest: {:?}", r);
+                            warn!("couldn't harvest from ActiveSource: {:?}", r);
                             continue;
                         }
                         is_harvested = true;
@@ -508,7 +508,7 @@ pub fn creep_loop() {
                     if creep.pos().is_near_to(source) {
                         let r = creep.harvest(source);
                         if r != ReturnCode::Ok {
-                            warn!("couldn't harvest: {:?}", r);
+                            warn!("couldn't harvest from Minerals: {:?}", r);
                             continue;
                         }
                         is_harvested = true;
@@ -537,7 +537,7 @@ pub fn creep_loop() {
                                     Structure::Container(container) => {
                                         let r = creep.withdraw_all(container, resource_type);
                                         if r != ReturnCode::Ok {
-                                            warn!("couldn't withdraw: {:?}", r);
+                                            warn!("couldn't withdraw from container: {:?}", r);
                                             continue;
                                         }
                                         creep.memory().set("harvested_from_storage", true); 
@@ -548,7 +548,7 @@ pub fn creep_loop() {
                                     Structure::Storage(storage) => {
                                         let r = creep.withdraw_all(storage, resource_type);
                                         if r != ReturnCode::Ok {
-                                            warn!("couldn't withdraw: {:?}", r);
+                                            warn!("couldn't withdraw from storage: {:?}", r);
                                             continue;
                                         }
                                         creep.memory().set("harvested_from_storage", true); 
@@ -579,7 +579,7 @@ pub fn creep_loop() {
                     let res = creep.move_by_path_search_result(&path_search_result);           
 
                     if res != ReturnCode::Ok {
-                        warn!("couldn't move to source: {:?}", res);
+                        info!("couldn't move to source: {:?}", res);
                         if res == ReturnCode::NoPath {
                             creep.memory().del("target_pos");
                         }

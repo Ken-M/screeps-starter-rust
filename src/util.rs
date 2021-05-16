@@ -656,7 +656,7 @@ pub fn find_nearest_active_source(creep: &screeps::objects::Creep, resource_kind
              find_item_list.push((object.clone(), 1));     
          }           
     } else {
-          // comodities.
+          // power.
           let item_list = &creep
           .room()
           .expect("room is not visible to you")
