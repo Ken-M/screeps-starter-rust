@@ -38,7 +38,8 @@ pub fn run_harvester(creep:&Creep){
 
         if is_harvested_from_storage == true &&
             ( structure.structure_type() == StructureType::Container ||
-                structure.structure_type() == StructureType::Storage ) {
+              structure.structure_type() == StructureType::Storage ||
+              structure.structure_type() == StructureType::Terminal  ) {
             //前回storage系からresourceを調達している場合はもどさないようにする.
 
             continue ;

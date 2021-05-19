@@ -13,7 +13,7 @@ use lazy_static::* ;
 
 
 pub fn do_spawn() {
-    if screeps::game::creeps::values().len() >= 20 {
+    if screeps::game::creeps::values().len() >= 25 {
         return;
     }
    
