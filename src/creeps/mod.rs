@@ -515,7 +515,7 @@ pub fn creep_loop() {
                 for source in sources.iter() {
                     if creep.pos().is_near_to(source) {
                         let r = creep.harvest(source);
-                        if r != ReturnCode::Ok {
+                        if r != ReturnCode::Ok && r != ReturnCode::Tired {
                             info!("couldn't harvest from Minerals: {:?}", r);
                             continue;
                         }

@@ -448,10 +448,15 @@ pub fn find_nearest_transfarable_item(creep: &screeps::objects::Creep, resource_
 
     for chk_item in item_list {
 
+        if chk_item.structure_type() == StructureType::Lab && *resource_kind == ResourceKind::MINELALS {
+            
+            continue ;
+        }
+
         if *is_except_storages == true &&
             ( chk_item.structure_type() == StructureType::Container ||
-              chk_item.structure_type() == StructureType::Storage ) ||
-             (*resource_kind == ResourceKind::ENERGY && chk_item.structure_type() == StructureType::Terminal)  {
+              chk_item.structure_type() == StructureType::Storage  ||
+             (*resource_kind == ResourceKind::ENERGY && chk_item.structure_type() == StructureType::Terminal))  {
             //前回storage系からresourceを調達している場合はもどさないようにする.
 
             continue ;
@@ -698,6 +703,7 @@ pub fn find_nearest_stored_source(creep: &screeps::objects::Creep, resource_kind
     for chk_item in item_list.iter() {
         if chk_item.structure_type() == StructureType::Container ||
            chk_item.structure_type() == StructureType::Storage || 
+           chk_item.structure_type() == StructureType::Lab || 
            (*resource_kind == ResourceKind::ENERGY && chk_item.structure_type() == StructureType::Terminal) {
 
             if  check_my_structure(chk_item) {
