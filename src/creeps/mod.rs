@@ -259,7 +259,7 @@ pub fn creep_loop() {
 
     for creep in screeps::game::creeps::values() {
         let name = creep.name();
-        info!("running creep {}", name);
+        info!("running creep {}, cpu:{}", name, screeps::game::cpu::get_used());
 
         let mut attacker_kind : AttackerKind = AttackerKind::NONE ;
         let mut role_string =  String::from("none");
@@ -277,19 +277,19 @@ pub fn creep_loop() {
                     creep.memory().set("role", "harvester_spawn");
                     num_harvester_spawn += 1 ;
                     role_string = String::from("harvester_spawn") ;
-                } else if num_upgrader == 0 {
+                } else if num_upgrader < (screeps::game::creeps::values().len() as i32 / 5)+1 {
                     creep.memory().set("role", "upgrader");
                     num_upgrader += 1 ;
                     role_string = String::from("upgrader") ;
-                } else if num_builder < (screeps::game::creeps::values().len() as i32 / 3) {
+                } else if num_builder < (screeps::game::creeps::values().len() as i32 / 5) {
                     creep.memory().set("role", "builder");
                     num_builder += 1;
                     role_string = String::from("builder") ;        
-                } else if num_repairer < (screeps::game::creeps::values().len() as i32 / 3) {
+                } else if num_repairer < (screeps::game::creeps::values().len() as i32 / 5) {
                     creep.memory().set("role", "repairer");
                     num_repairer += 1;
                     role_string = String::from("repairer") ;     
-                } else if num_harvester_mineral < (screeps::game::creeps::values().len() as i32 / 10) {
+                } else if (num_harvester_mineral <= 1) && (screeps::game::creeps::values().len() as i32 > 20) {
                     creep.memory().set("role", "harvester_mineral");
                     num_harvester_mineral += 1;
                     harvest_kind = ResourceKind::MINELALS ;
@@ -535,11 +535,11 @@ pub fn creep_loop() {
                 .find(find::STRUCTURES);
 
                 for structure in structures.iter() {
-                    let resource_type_list = make_resoucetype_list(&harvest_kind) ;
-                    for resource_type in resource_type_list {
+                    if creep.pos().is_near_to(structure) {
+                        let resource_type_list = make_resoucetype_list(&harvest_kind) ;
+                        for resource_type in resource_type_list {
 
-                        if check_stored(structure, &resource_type) {
-                            if creep.pos().is_near_to(structure) {
+                            if check_stored(structure, &resource_type) {                             
 
                                 match structure {
                                     Structure::Container(container) => {
@@ -580,13 +580,13 @@ pub fn creep_loop() {
                                     _=>{
                                         //do nothing
                                     }
-                                }
-                            }
-                        } 
-                    }
+                                }                                
+                            } 
+                        }
 
-                    if is_harvested == true {
-                        break ;
+                        if is_harvested == true {
+                            break ;
+                        }
                     }
                 }
             }

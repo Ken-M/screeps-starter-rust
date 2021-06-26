@@ -78,7 +78,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static>
         match room {
             Some(room_obj) => {
 
-                let structures = room_obj.find(STRUCTURES) ;
+                let structures = room_obj.find(STRUCTURES) ;                
 
                 // 地形データを反映.
                 for x_pos in 0..ROOM_SIZE_X {
@@ -117,6 +117,17 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static>
                     cost_matrix.set(creep.pos().x() as u8, creep.pos().y() as u8, 0xff);
                 }
 
+                // ConstructionSiteの通行不可なものをマーク.
+                let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES) ;
+                for construction_site in construction_sites {
+                    if construction_site.structure_type() != StructureType::Road &&
+                       construction_site.structure_type() != StructureType::Container &&
+                       construction_site.structure_type() != StructureType::Rampart {                           
+                        // Can't walk through non-walkable construction sites.
+                        cost_matrix.set(construction_site.pos().x() as u8, construction_site.pos().y() as u8, 0xff);
+                    }
+                }
+
                 // active sourceの周辺はコストをあげる.
                 let item_list = room_obj
                 .find(SOURCES_ACTIVE);
@@ -131,7 +142,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static>
                             let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8) ;
                             // すでに通行不可としてマークされているマスは触らない.
                             if cur_cost < 0xff {
-                                let new_cost = cur_cost + 50;
+                                let new_cost = cur_cost + 20;
                                 cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost) ;
                             }
                         }
@@ -294,7 +305,50 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool
     }
     return false;
 }
+pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) -> bool
+{
+    match structure.as_owned() {            
+        Some(my_structure) => {
 
+            if my_structure.my() == false {
+                return false ;
+            }
+        
+            match structure.as_attackable() {
+                Some(attackable) => {
+        
+                    if attackable.hits() < attackable.hits_max() {
+                        if attackable.hits() < hp_th {
+                            return true ;
+                        }
+                    }
+                }
+        
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+
+        None => {
+            match structure.as_attackable() {
+                Some(attackable) => {
+        
+                    if attackable.hits() < attackable.hits_max() {
+                        if attackable.hits() < hp_th {
+                            return true ;
+                        }
+                    }
+                }
+        
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+    }
+    return false;
+}
 pub fn check_stored(structure: &screeps::objects::Structure, resource_type: &ResourceType) -> bool {
 
     match structure.as_has_store() {            
@@ -478,7 +532,7 @@ pub fn find_nearest_transfarable_item(creep: &screeps::objects::Creep, resource_
     return search_many(creep, find_item_list, option)
 }
 
-pub fn find_nearest_repairable_item(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+pub fn find_nearest_repairable_item_onlywall(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
 {
     let item_list = &creep
     .room()
@@ -488,8 +542,85 @@ pub fn find_nearest_repairable_item(creep: &screeps::objects::Creep) -> screeps:
     let mut find_item_list = Vec::<(Structure, u32)>::new() ;
 
     for chk_item in item_list {
-        if check_repairable(chk_item) {
-            find_item_list.push((chk_item.clone(), 1));
+        if chk_item.structure_type() == StructureType::Wall {
+            if check_repairable(chk_item) {
+                find_item_list.push((chk_item.clone(), 1));
+            }
+        }
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_repairable_item_onlywall_hp1k(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
+
+    for chk_item in item_list {
+        if chk_item.structure_type() == StructureType::Wall {
+            if check_repairable_hp(chk_item, 1000) {
+                find_item_list.push((chk_item.clone(), 1));
+            }
+        }
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_repairable_item_onlywall_hp1m(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
+
+    for chk_item in item_list {
+        if chk_item.structure_type() == StructureType::Wall {
+            if check_repairable_hp(chk_item, 1000000) {
+                find_item_list.push((chk_item.clone(), 1));
+            }
+        }
+    }
+
+    let option = SearchOptions::new()
+    .room_callback(calc_room_cost)
+    .plain_cost(2)
+    .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option)
+}
+
+pub fn find_nearest_repairable_item_except_wall(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+{
+    let item_list = &creep
+    .room()
+    .expect("room is not visible to you")
+    .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
+
+    for chk_item in item_list {
+        if chk_item.structure_type() != StructureType::Wall {
+            if check_repairable(chk_item) {
+                find_item_list.push((chk_item.clone(), 1));
+            }
         }
     }
 

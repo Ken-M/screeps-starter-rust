@@ -5,6 +5,8 @@ use screeps::{Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, Struc
 use screeps::constants::find::*;
 use crate::util::*;
 
+use crate::creeps::builder::*;
+
 
 pub fn run_harvester(creep:&Creep){
     let name = creep.name();
@@ -91,10 +93,14 @@ pub fn run_harvester(creep:&Creep){
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res); 
-        if res != ReturnCode::Ok {
-            info!("couldn't move to transfer: {:?}", res);
+        if res == ReturnCode::Ok {
+            return;
         }
+        
+        info!("couldn't move to transfer: {:?}", res);
     }
+
+    run_builder(creep) ;
 }
 
 pub fn run_harvester_spawn(creep:&Creep){
@@ -272,5 +278,9 @@ pub fn run_harvester_mineral(creep:&Creep){
         if res != ReturnCode::Ok {
             info!("couldn't move to transfer: {:?}", res);
         }
+
+        return ;
     }
+
+    run_builder(creep) ;
 }

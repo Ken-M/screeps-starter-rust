@@ -1,5 +1,5 @@
 use log::*;
-use screeps::{Attackable, Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, find, game, pathfinder::SearchResults, prelude::*};
+use screeps::{Attackable, Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, StructureType, find, game, pathfinder::SearchResults, prelude::*};
 use screeps::constants::find::*;
 use crate::util::*;
 use screeps::Structure;
@@ -62,30 +62,64 @@ pub fn run_tower(){
                         return ;
                     }
 
-                    if my_tower.store_of(ResourceType::Energy) > (my_tower.store_capacity(Some(ResourceType::Energy))/2) {
+                    if my_tower.store_of(ResourceType::Energy) > (my_tower.store_capacity(Some(ResourceType::Energy))*2/3) {
                         debug!("repair structure {}", my_tower.id());
+
                         let my_structures = my_tower
                         .room()
                         .expect("room is not visible to you")
                         .find(STRUCTURES);
-            
-                        for my_structure in my_structures {
-
-                            match my_structure.as_attackable() {
-
-                                Some(attackable) => {                    
-                                    if attackable.hits() < attackable.hits_max() {
-                                        let r = my_tower.repair(&my_structure) ;               
-                                        if r == ReturnCode::Ok {
-                                            info!("repair my structure!!");
-                                            task_done = true ;
-                                            break ;
-                                        }
-                                    } 
+                        
+                        // Wall以外でまず確認.
+                        for structure in my_structures.iter() {
+                            if structure.structure_type() != StructureType::Wall {
+                                if check_repairable(structure) {
+                                    let r = my_tower.repair(structure) ;               
+                                    if r == ReturnCode::Ok {
+                                        info!("repair my structure!!");
+                                        task_done = true ;
+                                        break ;
+                                    }
                                 }
+                            }
+                        }
 
-                                None => {
-                                    // my_struct is not transferable.
+                        // Wall含め.
+                        for structure in my_structures.iter() {
+                            if structure.structure_type() == StructureType::Wall {
+                                if check_repairable_hp(structure, 1000) {
+                                    let r = my_tower.repair(structure) ;               
+                                    if r == ReturnCode::Ok {
+                                        info!("repair my structure!!");
+                                        task_done = true ;
+                                        break ;
+                                    }
+                                }
+                            }
+                        }
+
+                        for structure in my_structures.iter() {
+                            if structure.structure_type() == StructureType::Wall {
+                                if check_repairable_hp(structure, 1000000) {
+                                    let r = my_tower.repair(structure) ;               
+                                    if r == ReturnCode::Ok {
+                                        info!("repair my structure!!");
+                                        task_done = true ;
+                                        break ;
+                                    }
+                                }
+                            }
+                        }
+
+                        for structure in my_structures.iter() {
+                            if structure.structure_type() == StructureType::Wall {
+                                if check_repairable(structure) {
+                                    let r = my_tower.repair(structure) ;               
+                                    if r == ReturnCode::Ok {
+                                        info!("repair my structure!!");
+                                        task_done = true ;
+                                        break ;
+                                    }
                                 }
                             }
                         }

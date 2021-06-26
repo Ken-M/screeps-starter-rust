@@ -3,6 +3,8 @@ use screeps::{Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, find,
 use screeps::constants::find::*;
 use crate::util::*;
 
+use crate::creeps::repairer::*;
+
 
 pub fn run_builder(creep:&Creep){
     let name = creep.name();
@@ -31,5 +33,10 @@ pub fn run_builder(creep:&Creep){
         if res != ReturnCode::Ok {
             info!("couldn't move to build: {:?}", res);
         }
+
+        return ;
     }
+
+    // if nothing to do, act like repairer.
+    run_repairer(creep);
 }

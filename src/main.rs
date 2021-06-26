@@ -45,13 +45,13 @@ fn game_loop() {
 
     util::clear_init_flag();
 
-    info!("running spawns");
+    info!("running spawns cpu:{}",screeps::game::cpu::get_used());
     create::spawn::do_spawn();
 
-    info!("running creeps");
+    info!("running creeps cpu:{}",screeps::game::cpu::get_used());
     creeps::creep_loop();
 
-    info!("running towers");
+    info!("running towers cpu:{}",screeps::game::cpu::get_used());
     defence::tower::run_tower();
 
     let time = screeps::game::time();

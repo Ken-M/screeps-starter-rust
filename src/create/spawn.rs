@@ -1,7 +1,7 @@
 use std::{collections::HashSet, usize};
 
 use log::*;
-use screeps::{IntoExpectedType, Part, ResourceType, ReturnCode, RoomObjectProperties, StructureType, find, prelude::*};
+use screeps::{Attackable, IntoExpectedType, Part, ResourceType, ReturnCode, RoomObjectProperties, StructureType, find, prelude::*};
 use screeps::StructureExtension;
 use screeps::Structure;
 use stdweb::js;
@@ -13,7 +13,7 @@ use lazy_static::* ;
 
 
 pub fn do_spawn() {
-    if screeps::game::creeps::values().len() >= 25 {
+    if screeps::game::creeps::values().len() >= 10 {
         return;
     }
    
@@ -31,6 +31,28 @@ pub fn do_spawn() {
 
     for spawn in screeps::game::spawns::values() {
         info!("running spawn {}", spawn.name());
+
+
+        // check got attacked.
+        if spawn.hits() < spawn.hits_max() {
+            info!("got attacked!!");
+
+            let all_structures = spawn
+            .room()
+            .expect("room is not visible to you")
+            .find(STRUCTURES);         
+            
+            for structure in all_structures {        
+                match structure {
+                    Structure::Controller(controller) => {
+                        controller.activate_safe_mode() ;
+                    }
+                    _ => {
+                        //nothint to do.
+                    }
+                }
+            }
+        }
 
         //check energy can be used.
         let all_structures = spawn
@@ -79,7 +101,7 @@ pub fn do_spawn() {
         }
 
         // 長距離攻撃がたりなければ装備.
-        if opt_num_attackable_long < std::cmp::max(1, num_total_creep/5) {
+        if opt_num_attackable_long < std::cmp::max(1, num_total_creep/3) {
 
             if sum_energy >= body_long_atk_cost {
                 body.extend(body_long_atk_unit.iter().cloned());
@@ -87,7 +109,7 @@ pub fn do_spawn() {
             }
 
         // 短距離攻撃が足りなければ装備.           
-        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep/5) {
+        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep/3) {
             if sum_energy >= body_short_atk_cost {
                 body.extend(body_short_atk_unit.iter().cloned());
                 sum_energy -= body_short_atk_cost; 
