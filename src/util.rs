@@ -5,12 +5,11 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
-    RoomPosition, Source, Structure, StructureProperties,
+    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties, RoomPosition,
+    Source, Structure, StructureProperties,
 };
 use std::cmp::*;
 use std::{collections::HashMap, u32, u8};
-
 
 use lazy_static::lazy_static;
 use std::sync::RwLock;
@@ -305,6 +304,40 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
     }
     return false;
 }
+
+pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32> {
+    match structure.as_owned() {
+        Some(my_structure) => {
+            if my_structure.my() == false {
+                return None;
+            }
+
+            match structure.as_attackable() {
+                Some(attackable) => {
+                    return Some(attackable.hits_max() - attackable.hits());
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+
+        None => {
+            match structure.as_attackable() {
+                Some(attackable) => {
+                    return Some(attackable.hits_max() - attackable.hits());
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+    }
+    return None;
+}
+
 pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) -> bool {
     match structure.as_owned() {
         Some(my_structure) => {
@@ -530,8 +563,9 @@ pub fn find_nearest_transfarable_item(
     return search_many(creep, find_item_list, option);
 }
 
-pub fn find_nearest_repairable_item_onlywall(
+pub fn find_nearest_repairable_item_onlywall_repair_hp(
     creep: &screeps::objects::Creep,
+    threshold: u32,
 ) -> screeps::pathfinder::SearchResults {
     let item_list = &creep
         .room()
@@ -542,8 +576,15 @@ pub fn find_nearest_repairable_item_onlywall(
 
     for chk_item in item_list {
         if chk_item.structure_type() == StructureType::Wall {
-            if check_repairable(chk_item) {
-                find_item_list.push((chk_item.clone(), 1));
+            let repair_hp = get_repairable_hp(chk_item);
+            match repair_hp {
+                Some(hp) => {
+                    if hp >= (threshold - 1) {
+                        find_item_list.push((chk_item.clone(), 1));
+                    }
+                }
+
+                None => {}
             }
         }
     }

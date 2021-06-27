@@ -55,6 +55,23 @@ pub fn run_repairer(creep: &Creep) {
         }
     }
 
+    let mut total_repair_hp: u128 = 0;
+    let mut count: u128 = 0;
+
+    for structure in structures.iter() {
+        if structure.structure_type() == StructureType::Wall {
+            let repair_hp = get_repairable_hp(structure);
+
+            match repair_hp {
+                Some(hp) => {
+                    count += 1 as u128;
+                    total_repair_hp += hp as u128
+                }
+                None => {}
+            }
+        }
+    }
+
     // Wall含め 5k.
     if is_skip_repair == false {
         for structure in structures.iter() {
@@ -97,18 +114,30 @@ pub fn run_repairer(creep: &Creep) {
 
     // のこり.
     if is_skip_repair == false {
-        for structure in structures.iter() {
-            if structure.structure_type() == StructureType::Wall {
-                if check_repairable(structure) {
-                    let r = creep.repair(structure);
+        if count > 0 {
+            let average = ((total_repair_hp / count) - 1) as u32;
+            info!("repair_hp:{:?}", average);
 
-                    if r == ReturnCode::Ok {
-                        info!("repair my_structure!!");
-                        return;
-                    }
+            for structure in structures.iter() {
+                if structure.structure_type() == StructureType::Wall {
+                    let repair_hp = get_repairable_hp(structure);
 
-                    if r == ReturnCode::NotInRange {
-                        is_skip_repair = true;
+                    match repair_hp {
+                        Some(hp) => {
+                            if hp >= average {
+                                let r = creep.repair(structure);
+
+                                if r == ReturnCode::Ok {
+                                    info!("repair my_structure!!");
+                                    return;
+                                }
+
+                                if r == ReturnCode::NotInRange {
+                                    is_skip_repair = true;
+                                }
+                            }
+                        }
+                        None => {}
                     }
                 }
             }
@@ -156,15 +185,18 @@ pub fn run_repairer(creep: &Creep) {
 
     // Wall含め.
     debug!("4");
-    let res = find_nearest_repairable_item_onlywall(&creep);
+    if count > 0 {
+        let average = ((total_repair_hp / count) - 1) as u32;
+        let res = find_nearest_repairable_item_onlywall_repair_hp(&creep, average);
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to repair: {:?}", res);
+        if res.load_local_path().len() > 0 {
+            let res = creep.move_by_path_search_result(&res);
+            if res != ReturnCode::Ok {
+                info!("couldn't move to repair: {:?}", res);
+            }
+
+            return;
         }
-
-        return;
     }
 
     run_harvester(creep);

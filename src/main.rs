@@ -2,8 +2,7 @@ use std::collections::HashSet;
 
 use log::*;
 
-
-use stdweb::{js};
+use stdweb::js;
 
 //mod attack;
 //mod defence;

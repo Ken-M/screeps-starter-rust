@@ -12,8 +12,6 @@ use screeps::{
     Position, ResourceType, ReturnCode, RoomObjectProperties, StructureType,
 };
 
-
-
 #[derive(PartialEq, Debug)]
 enum AttackerKind {
     SHORT,

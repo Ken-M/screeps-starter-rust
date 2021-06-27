@@ -1,5 +1,3 @@
-
-
 use crate::util::*;
 use log::*;
 use screeps::constants::find::*;

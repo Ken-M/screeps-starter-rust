@@ -1,5 +1,4 @@
-use std::{usize};
-
+use std::usize;
 
 use log::*;
 use screeps::constants::find::*;
@@ -9,7 +8,6 @@ use screeps::{
     find, prelude::*, Attackable, IntoExpectedType, Part, ResourceType, ReturnCode,
     RoomObjectProperties, StructureType,
 };
-
 
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= 10 {

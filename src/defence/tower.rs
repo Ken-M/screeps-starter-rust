@@ -82,6 +82,23 @@ pub fn run_tower() {
                             }
                         }
 
+                        let mut total_repair_hp: u128 = 0;
+                        let mut count: u128 = 0;
+
+                        for structure in my_structures.iter() {
+                            if structure.structure_type() == StructureType::Wall {
+                                let repair_hp = get_repairable_hp(structure);
+
+                                match repair_hp {
+                                    Some(hp) => {
+                                        count += 1;
+                                        total_repair_hp += hp as u128;
+                                    }
+                                    None => {}
+                                }
+                            }
+                        }
+
                         // Wall含め.
                         for structure in my_structures.iter() {
                             if structure.structure_type() == StructureType::Wall {
@@ -109,14 +126,25 @@ pub fn run_tower() {
                             }
                         }
 
-                        for structure in my_structures.iter() {
-                            if structure.structure_type() == StructureType::Wall {
-                                if check_repairable(structure) {
-                                    let r = my_tower.repair(structure);
-                                    if r == ReturnCode::Ok {
-                                        info!("repair my structure!!");
-                                        task_done = true;
-                                        break;
+                        if count > 0 {
+                            let average = (total_repair_hp / count) - 1;
+                            for structure in my_structures.iter() {
+                                if structure.structure_type() == StructureType::Wall {
+                                    let repair_hp = get_repairable_hp(structure);
+
+                                    match repair_hp {
+                                        Some(hp) => {
+                                            if hp >= average as u32 {
+                                                let r = my_tower.repair(structure);
+
+                                                if r == ReturnCode::Ok {
+                                                    info!("repair my structure!!");
+                                                    task_done = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        None => {}
                                     }
                                 }
                             }
