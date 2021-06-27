@@ -1,19 +1,18 @@
 use std::collections::HashSet;
 
 use log::*;
+use screeps::constants::find::*;
 use screeps::{find, prelude::*, Part, ResourceType, ReturnCode, RoomObjectProperties};
 use stdweb::{js, serde};
-use screeps::constants::find::*;
 
 //mod attack;
 //mod defence;
-mod creeps;
 mod create;
-mod util;
+mod creeps;
 mod defence;
+mod util;
 
 mod logging;
-
 
 fn main() {
     logging::setup_logging(logging::Info);
@@ -45,13 +44,13 @@ fn game_loop() {
 
     util::clear_init_flag();
 
-    info!("running spawns cpu:{}",screeps::game::cpu::get_used());
+    info!("running spawns cpu:{}", screeps::game::cpu::get_used());
     create::spawn::do_spawn();
 
-    info!("running creeps cpu:{}",screeps::game::cpu::get_used());
+    info!("running creeps cpu:{}", screeps::game::cpu::get_used());
     creeps::creep_loop();
 
-    info!("running towers cpu:{}",screeps::game::cpu::get_used());
+    info!("running towers cpu:{}", screeps::game::cpu::get_used());
     defence::tower::run_tower();
 
     let time = screeps::game::time();

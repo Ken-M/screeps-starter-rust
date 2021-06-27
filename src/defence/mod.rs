@@ -1,8 +1,11 @@
 pub mod tower;
 
-use log::*;
-use screeps::{LookConstant, Part, Position, ResourceType, ReturnCode, RoomObjectProperties, find, look::CREEPS, pathfinder::SearchResults, prelude::*};
-use screeps::constants::find::*;
 use crate::util::*;
+use log::*;
+use screeps::constants::find::*;
+use screeps::{
+    find, look::CREEPS, pathfinder::SearchResults, prelude::*, LookConstant, Part, Position,
+    ResourceType, ReturnCode, RoomObjectProperties,
+};
 
-use stdweb::serde ;
+use stdweb::serde;

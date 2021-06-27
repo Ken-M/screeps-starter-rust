@@ -1,20 +1,22 @@
-use log::*;
-use screeps::{Attackable, Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, StructureType, find, pathfinder::SearchResults, prelude::*};
-use screeps::constants::find::*;
 use crate::util::*;
+use log::*;
+use screeps::constants::find::*;
+use screeps::{
+    find, pathfinder::SearchResults, prelude::*, Attackable, Creep, Part, ResourceType, ReturnCode,
+    RoomObjectProperties, StructureType,
+};
 
 use crate::creeps::harvester::*;
 
-pub fn run_repairer(creep:&Creep){
-
+pub fn run_repairer(creep: &Creep) {
     let name = creep.name();
     info!("running repairer {}", creep.name());
 
     debug!("check spawns {}", name);
     let my_spawns = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(MY_SPAWNS);
+        .room()
+        .expect("room is not visible to you")
+        .find(MY_SPAWNS);
 
     for my_spawn in my_spawns.iter() {
         if my_spawn.hits() < my_spawn.hits_max() {
@@ -23,15 +25,15 @@ pub fn run_repairer(creep:&Creep){
 
             if r == ReturnCode::Ok {
                 info!("repair spawn!!");
-                return ;
+                return;
             }
         }
     }
 
     let structures = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(STRUCTURES);
+        .room()
+        .expect("room is not visible to you")
+        .find(STRUCTURES);
 
     let mut is_skip_repair = false;
 
@@ -43,11 +45,11 @@ pub fn run_repairer(creep:&Creep){
 
                 if r == ReturnCode::Ok {
                     info!("repair my_structure!!");
-                    return ;
+                    return;
                 }
 
                 if r == ReturnCode::NotInRange {
-                    is_skip_repair = true ;
+                    is_skip_repair = true;
                 }
             }
         }
@@ -62,11 +64,11 @@ pub fn run_repairer(creep:&Creep){
 
                     if r == ReturnCode::Ok {
                         info!("repair my_structure!!");
-                        return ;
+                        return;
                     }
 
                     if r == ReturnCode::NotInRange {
-                        is_skip_repair = true ;
+                        is_skip_repair = true;
                     }
                 }
             }
@@ -82,11 +84,11 @@ pub fn run_repairer(creep:&Creep){
 
                     if r == ReturnCode::Ok {
                         info!("repair my_structure!!");
-                        return ;
+                        return;
                     }
 
                     if r == ReturnCode::NotInRange {
-                        is_skip_repair = true ;
+                        is_skip_repair = true;
                     }
                 }
             }
@@ -102,11 +104,11 @@ pub fn run_repairer(creep:&Creep){
 
                     if r == ReturnCode::Ok {
                         info!("repair my_structure!!");
-                        return ;
+                        return;
                     }
 
                     if r == ReturnCode::NotInRange {
-                        is_skip_repair = true ;
+                        is_skip_repair = true;
                     }
                 }
             }
@@ -116,40 +118,40 @@ pub fn run_repairer(creep:&Creep){
     //----------------------------------------
     // Wall以外でまず確認.
     debug!("1");
-    let res = find_nearest_repairable_item_except_wall(&creep) ;
+    let res = find_nearest_repairable_item_except_wall(&creep);
 
     if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res); 
+        let res = creep.move_by_path_search_result(&res);
         if res != ReturnCode::Ok {
             info!("couldn't move to repair: {:?}", res);
         }
-        return ;
-    }   
+        return;
+    }
 
     // Wall含め 1k.
     debug!("2");
     let res = find_nearest_repairable_item_onlywall_hp(&creep, 5000);
 
     if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res); 
+        let res = creep.move_by_path_search_result(&res);
         if res != ReturnCode::Ok {
             info!("couldn't move to repair: {:?}", res);
         }
 
-        return ;
+        return;
     }
 
     // Wall含め 1m.
     debug!("3");
-    let res = find_nearest_repairable_item_onlywall_hp(&creep,10000);
+    let res = find_nearest_repairable_item_onlywall_hp(&creep, 10000);
 
     if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res); 
+        let res = creep.move_by_path_search_result(&res);
         if res != ReturnCode::Ok {
             info!("couldn't move to repair: {:?}", res);
         }
 
-        return ;
+        return;
     }
 
     // Wall含め.
@@ -157,13 +159,13 @@ pub fn run_repairer(creep:&Creep){
     let res = find_nearest_repairable_item_onlywall(&creep);
 
     if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res); 
+        let res = creep.move_by_path_search_result(&res);
         if res != ReturnCode::Ok {
             info!("couldn't move to repair: {:?}", res);
         }
 
-        return ;
+        return;
     }
 
-    run_harvester(creep) ;
+    run_harvester(creep);
 }

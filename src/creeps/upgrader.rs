@@ -1,11 +1,12 @@
-use log::*;
-use screeps::{Creep, Part, ResourceType, ReturnCode, RoomObjectProperties, find, pathfinder::SearchResults, prelude::*};
-use screeps::constants::find::*;
 use crate::util::*;
+use log::*;
+use screeps::constants::find::*;
+use screeps::{
+    find, pathfinder::SearchResults, prelude::*, Creep, Part, ResourceType, ReturnCode,
+    RoomObjectProperties,
+};
 
-
-pub fn run_upgrader(creep:&Creep){
-
+pub fn run_upgrader(creep: &Creep) {
     let name = creep.name();
     info!("running upgrader {}", creep.name());
 
@@ -17,13 +18,12 @@ pub fn run_upgrader(creep:&Creep){
         .controller()
     {
         let r = creep.upgrade_controller(&c);
-        
-        if r == ReturnCode::NotInRange {
 
+        if r == ReturnCode::NotInRange {
             let res = find_path(&creep, &c.pos(), 1);
 
             if res.load_local_path().len() > 0 {
-                let res = creep.move_by_path_search_result(&res); 
+                let res = creep.move_by_path_search_result(&res);
                 if res != ReturnCode::Ok {
                     info!("couldn't move to upgrade: {:?}", res);
                 }
