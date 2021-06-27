@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use log::*;
-use screeps::constants::find::*;
-use screeps::{find, prelude::*, Part, ResourceType, ReturnCode, RoomObjectProperties};
-use stdweb::{js, serde};
+
+
+use stdweb::{js};
 
 //mod attack;
 //mod defence;

@@ -1,4 +1,4 @@
-use std::convert::TryInto;
+
 
 use crate::util::*;
 use log::*;
@@ -200,7 +200,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
 }
 
 pub fn run_harvester_mineral(creep: &Creep) {
-    let name = creep.name();
+    let _name = creep.name();
     info!("running harvester mineral{}", creep.name());
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");

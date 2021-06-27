@@ -5,12 +5,12 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    pathfinder::*, ConstructionSite, FindOptions, HasStore, LookResult, RoomObjectProperties,
+    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
     RoomPosition, Source, Structure, StructureProperties,
 };
 use std::cmp::*;
 use std::{collections::HashMap, u32, u8};
-use stdweb::web::event::ResourceAbortEvent;
+
 
 use lazy_static::lazy_static;
 use std::sync::RwLock;
@@ -188,7 +188,7 @@ pub fn check_walkable(position: &RoomPosition) -> bool {
 
         for object in objects {
             match object {
-                LookResult::Creep(creep) => {
+                LookResult::Creep(_creep) => {
                     return false;
                 }
 
@@ -241,7 +241,7 @@ pub fn check_transferable(
             }
 
             match structure.as_transferable() {
-                Some(transf) => {
+                Some(_transf) => {
                     match structure.as_has_store() {
                         Some(has_store) => {
                             if has_store.store_free_capacity(Some(*resource_type)) > 0 {

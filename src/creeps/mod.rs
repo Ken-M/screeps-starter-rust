@@ -12,7 +12,7 @@ use screeps::{
     Position, ResourceType, ReturnCode, RoomObjectProperties, StructureType,
 };
 
-use stdweb::serde;
+
 
 #[derive(PartialEq, Debug)]
 enum AttackerKind {
@@ -386,7 +386,7 @@ pub fn creep_loop() {
                                     }
                                 }
 
-                                Err(err) => {
+                                Err(_err) => {
                                     //ロードに成功して値もあったけどDeSerializeできなかった.
                                     let reset_result = reset_source_target(&creep, &harvest_kind);
                                     path_search_result = reset_result.0;
@@ -405,7 +405,7 @@ pub fn creep_loop() {
                 }
 
                 //ロードに失敗(key自体がない).
-                Err(err) => {
+                Err(_err) => {
                     let reset_result = reset_source_target(&creep, &harvest_kind);
                     path_search_result = reset_result.0;
                     defined_target_pos = reset_result.1;

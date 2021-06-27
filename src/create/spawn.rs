@@ -1,42 +1,42 @@
-use std::{collections::HashSet, usize};
+use std::{usize};
 
-use lazy_static::*;
+
 use log::*;
 use screeps::constants::find::*;
 use screeps::Structure;
-use screeps::StructureExtension;
+
 use screeps::{
     find, prelude::*, Attackable, IntoExpectedType, Part, ResourceType, ReturnCode,
     RoomObjectProperties, StructureType,
 };
-use stdweb::js;
+
 
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= 10 {
         return;
     }
 
-    let num_upgrader: i32 = screeps::memory::root()
+    let _num_upgrader: i32 = screeps::memory::root()
         .i32("num_upgrader")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_builder: i32 = screeps::memory::root()
+    let _num_builder: i32 = screeps::memory::root()
         .i32("num_builder")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_harvester: i32 = screeps::memory::root()
+    let _num_harvester: i32 = screeps::memory::root()
         .i32("num_harvester")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_harvester_spawn: i32 = screeps::memory::root()
+    let _num_harvester_spawn: i32 = screeps::memory::root()
         .i32("num_harvester_spawn")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_harvester_mineral: i32 = screeps::memory::root()
+    let _num_harvester_mineral: i32 = screeps::memory::root()
         .i32("num_harvester_mineral")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_repairer: i32 = screeps::memory::root()
+    let _num_repairer: i32 = screeps::memory::root()
         .i32("num_repairer")
         .unwrap_or(Some(0))
         .unwrap_or(0);
@@ -106,7 +106,7 @@ pub fn do_spawn() {
         let body_long_atk_cost: u32 = body_long_atk_unit.iter().map(|p| p.cost()).sum();
 
         let body_cost_vec = vec![body_cost, body_short_atk_cost, body_long_atk_cost];
-        let min_cost = body_cost_vec.iter().min().unwrap();
+        let _min_cost = body_cost_vec.iter().min().unwrap();
 
         let mut body = Vec::new();
 

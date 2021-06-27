@@ -1,6 +1,6 @@
 use crate::util::*;
 use log::*;
-use screeps::constants::find::*;
+
 use screeps::{
     find, pathfinder::SearchResults, prelude::*, Creep, Part, ResourceType, ReturnCode,
     RoomObjectProperties,
