@@ -87,7 +87,7 @@ pub fn run_tower(){
                         // Wall含め.
                         for structure in my_structures.iter() {
                             if structure.structure_type() == StructureType::Wall {
-                                if check_repairable_hp(structure, 1000) {
+                                if check_repairable_hp(structure, 5000) {
                                     let r = my_tower.repair(structure) ;               
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
@@ -100,7 +100,7 @@ pub fn run_tower(){
 
                         for structure in my_structures.iter() {
                             if structure.structure_type() == StructureType::Wall {
-                                if check_repairable_hp(structure, 1000000) {
+                                if check_repairable_hp(structure, 10000) {
                                     let r = my_tower.repair(structure) ;               
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");

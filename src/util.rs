@@ -557,7 +557,7 @@ pub fn find_nearest_repairable_item_onlywall(creep: &screeps::objects::Creep) ->
     return search_many(creep, find_item_list, option)
 }
 
-pub fn find_nearest_repairable_item_onlywall_hp1k(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+pub fn find_nearest_repairable_item_onlywall_hp(creep: &screeps::objects::Creep, threshold: u32) -> screeps::pathfinder::SearchResults
 {
     let item_list = &creep
     .room()
@@ -568,32 +568,7 @@ pub fn find_nearest_repairable_item_onlywall_hp1k(creep: &screeps::objects::Cree
 
     for chk_item in item_list {
         if chk_item.structure_type() == StructureType::Wall {
-            if check_repairable_hp(chk_item, 1000) {
-                find_item_list.push((chk_item.clone(), 1));
-            }
-        }
-    }
-
-    let option = SearchOptions::new()
-    .room_callback(calc_room_cost)
-    .plain_cost(2)
-    .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option)
-}
-
-pub fn find_nearest_repairable_item_onlywall_hp1m(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
-{
-    let item_list = &creep
-    .room()
-    .expect("room is not visible to you")
-    .find(STRUCTURES);
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new() ;
-
-    for chk_item in item_list {
-        if chk_item.structure_type() == StructureType::Wall {
-            if check_repairable_hp(chk_item, 1000000) {
+            if check_repairable_hp(chk_item, threshold) {
                 find_item_list.push((chk_item.clone(), 1));
             }
         }
@@ -658,7 +633,7 @@ pub fn find_nearest_transferable_structure(creep: &screeps::objects::Creep, stru
     return search_many(creep, find_item_list, option)
 }
 
-pub fn find_nearest_construction_site(creep: &screeps::objects::Creep) -> screeps::pathfinder::SearchResults
+pub fn find_nearest_construction_site(creep: &screeps::objects::Creep, threshold: u32) -> screeps::pathfinder::SearchResults
 {
     let item_list = &creep
     .room()
@@ -668,7 +643,9 @@ pub fn find_nearest_construction_site(creep: &screeps::objects::Creep) -> screep
     let mut find_item_list = Vec::<(ConstructionSite, u32)>::new() ;
 
     for chk_item in item_list.iter() {
-        find_item_list.push((chk_item.clone(), 1));
+        if (chk_item.progress_total() - chk_item.progress()) <= threshold {
+            find_item_list.push((chk_item.clone(), 1));
+        }
     }
 
     let option = SearchOptions::new()

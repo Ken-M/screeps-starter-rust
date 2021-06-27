@@ -33,6 +33,8 @@ pub fn run_repairer(creep:&Creep){
     .expect("room is not visible to you")
     .find(STRUCTURES);
 
+    let mut is_skip_repair = false;
+
     // Wall以外でまず確認.
     for structure in structures.iter() {
         if structure.structure_type() != StructureType::Wall {
@@ -43,45 +45,69 @@ pub fn run_repairer(creep:&Creep){
                     info!("repair my_structure!!");
                     return ;
                 }
-            }
-        }
-    }
 
-    // Wall含め.
-    for structure in structures.iter() {
-        if structure.structure_type() == StructureType::Wall {
-            if check_repairable_hp(structure, 1000) {
-                let r = creep.repair(structure);
-
-                if r == ReturnCode::Ok {
-                    info!("repair my_structure!!");
-                    return ;
+                if r == ReturnCode::NotInRange {
+                    is_skip_repair = true ;
                 }
             }
         }
     }
 
-    for structure in structures.iter() {
-        if structure.structure_type() == StructureType::Wall {
-            if check_repairable_hp(structure, 1000000) {
-                let r = creep.repair(structure);
+    // Wall含め 5k.
+    if is_skip_repair == false {
+        for structure in structures.iter() {
+            if structure.structure_type() == StructureType::Wall {
+                if check_repairable_hp(structure, 5000) {
+                    let r = creep.repair(structure);
 
-                if r == ReturnCode::Ok {
-                    info!("repair my_structure!!");
-                    return ;
+                    if r == ReturnCode::Ok {
+                        info!("repair my_structure!!");
+                        return ;
+                    }
+
+                    if r == ReturnCode::NotInRange {
+                        is_skip_repair = true ;
+                    }
                 }
             }
         }
     }
 
-    for structure in structures.iter() {
-        if structure.structure_type() == StructureType::Wall {
-            if check_repairable(structure) {
-                let r = creep.repair(structure);
+    // Wall含め 10k.
+    if is_skip_repair == false {
+        for structure in structures.iter() {
+            if structure.structure_type() == StructureType::Wall {
+                if check_repairable_hp(structure, 10000) {
+                    let r = creep.repair(structure);
 
-                if r == ReturnCode::Ok {
-                    info!("repair my_structure!!");
-                    return ;
+                    if r == ReturnCode::Ok {
+                        info!("repair my_structure!!");
+                        return ;
+                    }
+
+                    if r == ReturnCode::NotInRange {
+                        is_skip_repair = true ;
+                    }
+                }
+            }
+        }
+    }
+
+    // のこり.
+    if is_skip_repair == false {
+        for structure in structures.iter() {
+            if structure.structure_type() == StructureType::Wall {
+                if check_repairable(structure) {
+                    let r = creep.repair(structure);
+
+                    if r == ReturnCode::Ok {
+                        info!("repair my_structure!!");
+                        return ;
+                    }
+
+                    if r == ReturnCode::NotInRange {
+                        is_skip_repair = true ;
+                    }
                 }
             }
         }
@@ -102,7 +128,7 @@ pub fn run_repairer(creep:&Creep){
 
     // Wall含め 1k.
     debug!("2");
-    let res = find_nearest_repairable_item_onlywall_hp1k(&creep);
+    let res = find_nearest_repairable_item_onlywall_hp(&creep, 5000);
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res); 
@@ -115,7 +141,7 @@ pub fn run_repairer(creep:&Creep){
 
     // Wall含め 1m.
     debug!("3");
-    let res = find_nearest_repairable_item_onlywall_hp1m(&creep);
+    let res = find_nearest_repairable_item_onlywall_hp(&creep,10000);
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res); 
