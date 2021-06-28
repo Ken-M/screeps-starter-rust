@@ -6,7 +6,7 @@ use screeps::{
     RoomObjectProperties, StructureType,
 };
 
-use crate::creeps::harvester::*;
+use crate::creeps::upgrader::*;
 
 pub fn run_repairer(creep: &Creep) {
     let name = creep.name();
@@ -44,7 +44,12 @@ pub fn run_repairer(creep: &Creep) {
                 let r = creep.repair(structure);
 
                 if r == ReturnCode::Ok {
-                    info!("repair my_structure!!");
+                    info!(
+                        "repair my_structure!!:{:?},{:?},{:?}",
+                        structure.structure_type(),
+                        structure.pos().x(),
+                        structure.pos().y()
+                    );
                     return;
                 }
 
@@ -80,7 +85,12 @@ pub fn run_repairer(creep: &Creep) {
                     let r = creep.repair(structure);
 
                     if r == ReturnCode::Ok {
-                        info!("repair my_structure!!");
+                        info!(
+                            "repair my_structure!!:{:?},{:?},{:?}",
+                            structure.structure_type(),
+                            structure.pos().x(),
+                            structure.pos().y()
+                        );
                         return;
                     }
 
@@ -100,7 +110,12 @@ pub fn run_repairer(creep: &Creep) {
                     let r = creep.repair(structure);
 
                     if r == ReturnCode::Ok {
-                        info!("repair my_structure!!");
+                        info!(
+                            "repair my_structure!!:{:?},{:?},{:?}",
+                            structure.structure_type(),
+                            structure.pos().x(),
+                            structure.pos().y()
+                        );
                         return;
                     }
 
@@ -128,7 +143,12 @@ pub fn run_repairer(creep: &Creep) {
                                 let r = creep.repair(structure);
 
                                 if r == ReturnCode::Ok {
-                                    info!("repair my_structure!!");
+                                    info!(
+                                        "repair my_structure!!:{:?},{:?},{:?}",
+                                        structure.structure_type(),
+                                        structure.pos().x(),
+                                        structure.pos().y()
+                                    );
                                     return;
                                 }
 
@@ -199,5 +219,5 @@ pub fn run_repairer(creep: &Creep) {
         }
     }
 
-    run_harvester(creep);
+    run_upgrader(creep);
 }

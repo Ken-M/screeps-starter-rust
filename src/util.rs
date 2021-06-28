@@ -278,7 +278,9 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
             match structure.as_attackable() {
                 Some(attackable) => {
                     if attackable.hits() < attackable.hits_max() {
-                        return true;
+                        if attackable.hits() > 0 {
+                            return true;
+                        }
                     }
                 }
 
@@ -292,7 +294,9 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
             match structure.as_attackable() {
                 Some(attackable) => {
                     if attackable.hits() < attackable.hits_max() {
-                        return true;
+                        if attackable.hits() > 0 {
+                            return true;
+                        }
                     }
                 }
 
@@ -314,7 +318,11 @@ pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32>
 
             match structure.as_attackable() {
                 Some(attackable) => {
-                    return Some(attackable.hits_max() - attackable.hits());
+                    if attackable.hits() > 0 {
+                        return Some(attackable.hits_max() - attackable.hits());
+                    } else {
+                        return None;
+                    }
                 }
 
                 None => {
@@ -326,7 +334,11 @@ pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32>
         None => {
             match structure.as_attackable() {
                 Some(attackable) => {
-                    return Some(attackable.hits_max() - attackable.hits());
+                    if attackable.hits() > 0 {
+                        return Some(attackable.hits_max() - attackable.hits());
+                    } else {
+                        return None;
+                    }
                 }
 
                 None => {
@@ -348,7 +360,7 @@ pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) 
             match structure.as_attackable() {
                 Some(attackable) => {
                     if attackable.hits() < attackable.hits_max() {
-                        if attackable.hits() < hp_th {
+                        if (attackable.hits() < hp_th) && (attackable.hits() > 0) {
                             return true;
                         }
                     }
@@ -364,7 +376,7 @@ pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) 
             match structure.as_attackable() {
                 Some(attackable) => {
                     if attackable.hits() < attackable.hits_max() {
-                        if attackable.hits() < hp_th {
+                        if (attackable.hits() < hp_th) && (attackable.hits() > 0) {
                             return true;
                         }
                     }
