@@ -559,9 +559,14 @@ pub fn find_nearest_transfarable_item(
             continue;
         }
 
+        let mut dist = 1;
+        if chk_item.structure_type() == StructureType::Container {
+            dist = 0;
+        }
+
         for resource_type in resource_type_list.iter() {
             if check_transferable(chk_item, resource_type) {
-                find_item_list.push((chk_item.clone(), 1));
+                find_item_list.push((chk_item.clone(), dist));
                 break;
             }
         }

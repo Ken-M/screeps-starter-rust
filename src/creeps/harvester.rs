@@ -57,11 +57,22 @@ pub fn run_harvester(creep: &Creep) {
                         match structure.as_has_store() {
                             Some(has_store) => {
                                 if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0 {
-                                    let r = creep.transfer_all(transf, ResourceType::Energy);
+                                    if structure.structure_type() == StructureType::Container {
+                                        if structure.pos() == creep.pos() {
+                                            let r = creep.drop(ResourceType::Energy, None);
 
-                                    if r == ReturnCode::Ok {
-                                        info!("transferd to my_structure!!");
-                                        return;
+                                            if r == ReturnCode::Ok {
+                                                info!("dropeed to container!!");
+                                                return;
+                                            }
+                                        }
+                                    } else {
+                                        let r = creep.transfer_all(transf, ResourceType::Energy);
+
+                                        if r == ReturnCode::Ok {
+                                            info!("transferd to my_structure!!");
+                                            return;
+                                        }
                                     }
                                 }
                             }

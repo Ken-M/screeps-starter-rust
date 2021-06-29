@@ -9,8 +9,10 @@ use screeps::{
     RoomObjectProperties, StructureType,
 };
 
+const MAX_NUM_OF_CREEPS: u32 = 15;
+
 pub fn do_spawn() {
-    if screeps::game::creeps::values().len() >= 10 {
+    if screeps::game::creeps::values().len() >= MAX_NUM_OF_CREEPS as usize {
         return;
     }
 
@@ -54,7 +56,7 @@ pub fn do_spawn() {
         info!("running spawn {}", spawn.name());
 
         // check got attacked.
-        if spawn.hits() < spawn.hits_max() {
+        if (spawn.hits() < spawn.hits_max()) || ((num_total_creep as u32) < MAX_NUM_OF_CREEPS / 2) {
             info!("got attacked!!");
 
             let all_structures = spawn
@@ -116,21 +118,39 @@ pub fn do_spawn() {
             sum_energy -= body_cost;
         } else {
             // 基本セット分だけEnergyがたまってなければまた次回.
-            return;
+            continue;
         }
 
         // 長距離攻撃がたりなければ装備.
         if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 3) {
             if sum_energy >= body_long_atk_cost {
-                body.extend(body_long_atk_unit.iter().cloned());
-                sum_energy -= body_long_atk_cost;
+                while (sum_energy >= body_long_atk_cost)
+                    && ((body.len() + body_long_atk_unit.len())
+                        < screeps::constants::MAX_CREEP_SIZE as usize)
+                {
+                    body.extend(body_long_atk_unit.iter().cloned());
+                    sum_energy -= body_long_atk_cost;
+                }
+            } else {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
+                    continue;
+                }
             }
 
         // 短距離攻撃が足りなければ装備.
         } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 3) {
             if sum_energy >= body_short_atk_cost {
-                body.extend(body_short_atk_unit.iter().cloned());
-                sum_energy -= body_short_atk_cost;
+                while (sum_energy >= body_short_atk_cost)
+                    && ((body.len() + body_short_atk_unit.len())
+                        < screeps::constants::MAX_CREEP_SIZE as usize)
+                {
+                    body.extend(body_short_atk_unit.iter().cloned());
+                    sum_energy -= body_short_atk_cost;
+                }
+            } else {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
+                    continue;
+                }
             }
         }
 
