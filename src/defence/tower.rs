@@ -9,7 +9,6 @@ use screeps::{
 
 pub fn run_tower() {
     for game_structure in screeps::game::structures::values() {
-        let mut task_done = false;
 
         if check_my_structure(&game_structure) == true {
             match game_structure {
@@ -20,19 +19,19 @@ pub fn run_tower() {
                         .expect("room is not visible to you")
                         .find(HOSTILE_CREEPS);
 
+                    let room_name = my_tower
+                        .room()
+                        .expect("room is not visible to you")
+                        .name() ;
+
                     for enemy in enemies {
                         debug!("try attack enemy {}", my_tower.id());
                         let r = my_tower.attack(&enemy);
 
                         if r == ReturnCode::Ok {
                             info!("attack to enemy!!");
-                            task_done = true;
-                            break;
+                            return ;
                         }
-                    }
-
-                    if task_done == true {
-                        return;
                     }
 
                     debug!("heal creeps {}", my_tower.id());
@@ -48,14 +47,9 @@ pub fn run_tower() {
 
                             if r == ReturnCode::Ok {
                                 info!("heal my creep!!");
-                                task_done = true;
-                                break;
+                                return ;
                             }
                         }
-                    }
-
-                    if task_done == true {
-                        return;
                     }
 
                     if my_tower.store_of(ResourceType::Energy)
@@ -68,33 +62,35 @@ pub fn run_tower() {
                             .expect("room is not visible to you")
                             .find(STRUCTURES);
 
-                        // Wall以外でまず確認.
+                        // 残り時間が短いものを優先.
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
-                                    let r = my_tower.repair(structure);
-                                    if r == ReturnCode::Ok {
-                                        info!("repair my structure!!");
-                                        task_done = true;
-                                        break;
+                                    if get_live_tickcount(structure).unwrap_or(10000) <= 500 {
+
+                                        let r = my_tower.repair(structure);
+                                        if r == ReturnCode::Ok {
+                                            info!("repair my structure!!");
+                                            return ;
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        let mut total_repair_hp: u128 = 0;
-                        let mut count: u128 = 0;
-
+                        // Wall以外でまず確認.
                         for structure in my_structures.iter() {
-                            if structure.structure_type() == StructureType::Wall {
-                                let repair_hp = get_repairable_hp(structure);
+                            if structure.structure_type() != StructureType::Wall {
+                                if check_repairable(structure) {
 
-                                match repair_hp {
-                                    Some(hp) => {
-                                        count += 1;
-                                        total_repair_hp += hp as u128;
+                                    if get_hp_rate(structure).unwrap_or(0) <= (get_hp_average_exceptwall(&room_name) + 1) as u32 {
+
+                                        let r = my_tower.repair(structure);
+                                        if r == ReturnCode::Ok {
+                                            info!("repair my structure!!");
+                                            return ;
+                                        }
                                     }
-                                    None => {}
                                 }
                             }
                         }
@@ -106,8 +102,7 @@ pub fn run_tower() {
                                     let r = my_tower.repair(structure);
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
-                                        task_done = true;
-                                        break;
+                                        return ;
                                     }
                                 }
                             }
@@ -119,40 +114,32 @@ pub fn run_tower() {
                                     let r = my_tower.repair(structure);
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
-                                        task_done = true;
-                                        break;
+                                        return ;
                                     }
                                 }
                             }
                         }
 
-                        if count > 0 {
-                            let average = (total_repair_hp / count) - 1;
-                            for structure in my_structures.iter() {
-                                if structure.structure_type() == StructureType::Wall {
-                                    let repair_hp = get_repairable_hp(structure);
+                        for structure in my_structures.iter() {
+                            if structure.structure_type() == StructureType::Wall {
+                                let repair_hp = get_repairable_hp(structure);
 
-                                    match repair_hp {
-                                        Some(hp) => {
-                                            if hp >= average as u32 {
-                                                let r = my_tower.repair(structure);
+                                match repair_hp {
+                                    Some(hp) => {
+                                        if hp >= (get_repairable_hp_average_wall(&room_name)-1) as u32 {
+                                            let r = my_tower.repair(structure);
 
-                                                if r == ReturnCode::Ok {
-                                                    info!("repair my structure!!");
-                                                    task_done = true;
-                                                    break;
-                                                }
+                                            if r == ReturnCode::Ok {
+                                                info!("repair my structure!!");
+                                                return ;
                                             }
                                         }
-                                        None => {}
                                     }
+                                    None => {}
                                 }
                             }
                         }
-                    }
 
-                    if task_done == true {
-                        return;
                     }
                 }
 

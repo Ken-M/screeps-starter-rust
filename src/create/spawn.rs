@@ -9,7 +9,7 @@ use screeps::{
     RoomObjectProperties, StructureType,
 };
 
-const MAX_NUM_OF_CREEPS: u32 = 15;
+const MAX_NUM_OF_CREEPS: u32 = 20;
 
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= MAX_NUM_OF_CREEPS as usize {
@@ -122,7 +122,7 @@ pub fn do_spawn() {
         }
 
         // 長距離攻撃がたりなければ装備.
-        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 3) {
+        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 4) {
             if sum_energy >= body_long_atk_cost {
                 while (sum_energy >= body_long_atk_cost)
                     && ((body.len() + body_long_atk_unit.len())
@@ -132,13 +132,13 @@ pub fn do_spawn() {
                     sum_energy -= body_long_atk_cost;
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 4) {
                     continue;
                 }
             }
 
         // 短距離攻撃が足りなければ装備.
-        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 3) {
+        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 4) {
             if sum_energy >= body_short_atk_cost {
                 while (sum_energy >= body_short_atk_cost)
                     && ((body.len() + body_short_atk_unit.len())
@@ -148,7 +148,7 @@ pub fn do_spawn() {
                     sum_energy -= body_short_atk_cost;
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 4) {
                     continue;
                 }
             }

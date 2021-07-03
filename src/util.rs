@@ -18,19 +18,34 @@ const ROOM_SIZE_X: u8 = 50;
 const ROOM_SIZE_Y: u8 = 50;
 
 type Data = HashMap<RoomName, LocalCostMatrix>;
+type ConstructionProgressAverage = HashMap<RoomName, u128> ;
+type RepairableHpAverage_Wall = HashMap<RoomName, u128> ;
+type StructureHpAverage_ExceptWall = HashMap<RoomName, u128> ;
 
 struct GlobalInitFlag {
     init_flag: bool,
 }
 
 lazy_static! {
-    static ref CACHE: RwLock<Data> = RwLock::new(HashMap::new());
-    static ref FLAG: RwLock<GlobalInitFlag> = RwLock::new(GlobalInitFlag { init_flag: true });
+    static ref MAP_CACHE: RwLock<Data> = RwLock::new(HashMap::new());
+    static ref CONSTRUCTION_PROGRESS_AVERAGE_CACHE: RwLock<ConstructionProgressAverage>  = RwLock::new(HashMap::new());
+    static ref REPAIRABLE_HP_AVERAGE_WALL_CACHE: RwLock<RepairableHpAverage_Wall>  = RwLock::new(HashMap::new());
+    static ref STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE: RwLock<StructureHpAverage_ExceptWall>  = RwLock::new(HashMap::new());
 }
 
 pub fn clear_init_flag() {
-    let mut flag_struct = FLAG.write().unwrap();
-    flag_struct.init_flag = true;
+
+    let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
+    cost_matrix_cache.clear();
+
+    let mut construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.write().unwrap();
+    construction_progress_average.clear();
+
+    let mut repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.write().unwrap();
+    repairable_hp_average_wall.clear();
+
+    let mut structure_hp_average_exceptwall = STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.write().unwrap();
+    structure_hp_average_exceptwall.clear();
 }
 
 #[derive(PartialEq, Debug)]
@@ -41,27 +56,207 @@ pub enum ResourceKind {
     COMMODITIES,
 }
 
+pub fn calc_average(room_name: &RoomName) {
+
+    let mut construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.write().unwrap();
+    let mut repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.write().unwrap();
+    let mut structure_hp_average_exceptwall = STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.write().unwrap();
+
+    let room = screeps::game::rooms::get(*room_name);   
+
+    match room {
+        Some(room_obj) => {
+            let structures = room_obj.find(STRUCTURES);
+            let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES);
+
+            let mut total_repair_hp: u128 = 0;
+            let mut total_hp : u128 = 0;
+            let mut struct_count_wall: u128 = 0;
+            let mut struct_count_except_wall : u128 = 0;
+ 
+            for chk_struct in structures {
+
+                if chk_struct.structure_type() == StructureType::Wall {
+                    let repair_hp = get_repairable_hp(&chk_struct);
+        
+                    match repair_hp {
+                        Some(hp) => {
+                            struct_count_wall += 1 as u128;
+                            total_repair_hp += hp as u128
+                        }
+                        None => {}
+                    }
+                } else {
+                    let cur_hp = get_hp_rate(&chk_struct);
+        
+                    match cur_hp {
+                        Some(hp) => {
+                            struct_count_except_wall += 1 as u128;
+                            total_hp += hp as u128
+                        }
+                        None => {}
+                    }
+                }
+            }
+
+            let mut sum_of_progress:u128 = 0;
+            let mut construction_count:u128 = 0;
+
+            for construction_site in construction_sites.iter() {
+                sum_of_progress += construction_site.progress_total() as u128 - construction_site.progress() as u128;
+                construction_count +=1 ;
+            }
+
+            
+            if struct_count_wall > 0 {
+                repairable_hp_average_wall.insert(*room_name, total_repair_hp / struct_count_wall) ;
+                info!("{:?}: repairable_hp_average_wall:{:?}", room_name, total_repair_hp / struct_count_wall) ;
+            } else {
+                repairable_hp_average_wall.insert(*room_name,0) ;
+            }            
+
+            if struct_count_except_wall > 0 {
+                structure_hp_average_exceptwall.insert(*room_name,total_hp / struct_count_except_wall) ;
+                info!("{:?}: structure_hp_average_exceptwall:{:?}", room_name, total_hp / struct_count_except_wall) ;
+            } else {
+                structure_hp_average_exceptwall.insert(*room_name,0) ;
+            }            
+
+            if construction_count > 0 {
+                construction_progress_average.insert(*room_name,sum_of_progress / construction_count) ;
+                info!("{:?}: construction_progress_average:{:?}", *room_name, sum_of_progress / construction_count) ;
+            } else {
+                construction_progress_average .insert(*room_name,0) ;
+            }
+            
+        }
+
+        None => {}
+    }    
+}
+
+pub fn get_repairable_hp_average_wall(room_name: &RoomName) -> u128 {
+    {
+        let repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.read().unwrap();
+        let cache_value = repairable_hp_average_wall.get(&room_name) ;
+
+        match cache_value {
+            Some(value) => {
+                // use cached value.
+                return *value
+            }
+
+            None => { }
+        }
+    }
+
+    calc_average(room_name) ;
+
+    {
+        let repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.read().unwrap();
+        let cache_value = repairable_hp_average_wall.get(&room_name) ;
+
+        match cache_value {
+            Some(value) => {
+                // use cached value.
+                return *value
+            }
+
+            None => {
+                error!("failed to calculate repairable_hp_average_wall !!!");
+                return 0 ;
+            }
+        }
+    }
+}
+
+pub fn get_hp_average_exceptwall(room_name: &RoomName) -> u128  {
+    {
+        let structure_hp_average_exceptwall = STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.read().unwrap();
+        let cache_value = structure_hp_average_exceptwall.get(&room_name) ;
+
+        match cache_value {
+            Some(value) => {
+                // use cached value.
+                return *value
+            }
+
+            None => { }
+        }
+    }
+
+    calc_average(room_name) ;
+
+    {
+        let structure_hp_average_exceptwall = STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.read().unwrap();
+        let cache_value = structure_hp_average_exceptwall.get(&room_name) ;
+
+        match cache_value {
+            Some(value) => {
+                // use cached value.
+                return *value
+            }
+
+            None => {
+                error!("failed to calculate structure_hp_average_exceptwall !!!");
+                return 0;
+            }
+        }
+    }
+}
+
+pub fn get_construction_progress_average(room_name: &RoomName) -> u128  {
+    {
+        let construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.read().unwrap();
+        let cache_value = construction_progress_average.get(&room_name) ;
+
+        match cache_value {
+            Some(value) => {
+                // use cached value.
+                return *value
+            }
+
+            None => { }
+        }
+    }
+
+    calc_average(room_name) ;
+
+    {
+        let construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.read().unwrap();
+        let cache_value = construction_progress_average.get(&room_name) ;
+
+        match cache_value {
+            Some(value) => {
+                // use cached value.
+                return *value
+            }
+
+            None => {
+                error!("failed to calculate structure_hp_average_exceptwall !!!");
+                return 0;
+            }
+        }
+    }
+}
+
+
+
 fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
     let room = screeps::game::rooms::get(room_name);
     let mut cost_matrix = LocalCostMatrix::default();
     let mut is_cache_used = false;
 
     {
-        let cost_matrix_cache = CACHE.read().unwrap();
-        let flag_struct = FLAG.read().unwrap();
-
+        let cost_matrix_cache = MAP_CACHE.read().unwrap();
         let cache_data = cost_matrix_cache.get(&room_name);
 
         match cache_data {
             Some(value) => {
-                if flag_struct.init_flag == false {
-                    // use cached matrix.
-                    debug!("Room:{}, cache is used.", room_name);
-                    cost_matrix = value.clone();
-                    is_cache_used = true;
-                } else {
-                    info!("Room:{}, init flag is false.", room_name);
-                }
+                // use cached matrix.
+                debug!("Room:{}, cache is used.", room_name);
+                cost_matrix = value.clone();
+                is_cache_used = true;
             }
 
             None => {
@@ -167,11 +362,8 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
         }
 
         {
-            let mut cost_matrix_cache = CACHE.write().unwrap();
-            let mut flag_struct = FLAG.write().unwrap();
-
+            let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
             cost_matrix_cache.insert(room_name, cost_matrix.clone());
-            flag_struct.init_flag = false;
         }
     }
 
@@ -261,7 +453,25 @@ pub fn check_transferable(
         }
 
         None => {
-            //not my structure.
+            match structure.as_transferable() {
+                Some(_transf) => {
+                    match structure.as_has_store() {
+                        Some(has_store) => {
+                            if has_store.store_free_capacity(Some(*resource_type)) > 0 {
+                                return true;
+                            }
+                        }
+
+                        None => {
+                            //no store.
+                        }
+                    }
+                }
+
+                None => {
+                    // my_struct is not transferable
+                }
+            }
         }
     }
 
@@ -336,6 +546,140 @@ pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32>
                 Some(attackable) => {
                     if attackable.hits() > 0 {
                         return Some(attackable.hits_max() - attackable.hits());
+                    } else {
+                        return None;
+                    }
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+    }
+    return None;
+}
+
+pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u128> {
+
+    let room_obj = structure.room().expect("room is not visible to you") ;
+
+    match structure.as_owned() {
+        Some(my_structure) => {
+            if my_structure.my() == false {
+                return None;
+            }
+
+            match structure.as_attackable() {
+                Some(attackable) => {
+
+                    let this_terrain = room_obj.get_terrain().get(structure.pos().x(), structure.pos().y());
+
+                    match structure {
+                        Structure::Road(road) => {
+                            match this_terrain {
+                                Terrain::Plain => {
+                                    return Some( ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 /100) );                                    
+                                }
+                                Terrain::Swamp => {
+                                    return Some( ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 /500) );                                        
+                                }
+                                Terrain::Wall => {
+                                    return Some( ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 /1500) );                                      
+                                }
+                            }
+
+                        }
+
+                        Structure::Container(container) => {
+                            return Some(CONTAINER_DECAY_TIME_OWNED as u128 * (attackable.hits() as u128 / CONTAINER_DECAY as u128));
+                        }
+
+                        Structure::Rampart(ramport) => {
+                            return Some(RAMPART_DECAY_TIME as u128 * (attackable.hits() as u128 / RAMPART_DECAY_AMOUNT as u128));
+                        }
+                        
+                        _ => {}
+                    }
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+
+        None => {
+            match structure.as_attackable() {
+                Some(attackable) => {
+
+                    let this_terrain = room_obj.get_terrain().get(structure.pos().x(), structure.pos().y());
+
+                    match structure {
+                        Structure::Road(road) => {
+                            match this_terrain {
+                                Terrain::Plain => {
+                                    return Some( ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 /100) );                                    
+                                }
+                                Terrain::Swamp => {
+                                    return Some( ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 /500) );                                        
+                                }
+                                Terrain::Wall => {
+                                    return Some( ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 /1500) );                                      
+                                }
+                            }
+
+                        }
+
+                        Structure::Container(container) => {
+                            return Some(CONTAINER_DECAY_TIME_OWNED as u128 * (attackable.hits() as u128 / CONTAINER_DECAY as u128));
+                        }
+
+                        Structure::Rampart(ramport) => {
+                            return Some(RAMPART_DECAY_TIME as u128 * (attackable.hits() as u128 / RAMPART_DECAY_AMOUNT as u128));
+                        }
+                        
+                        _ => {}
+                    }
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+    }
+    return None;
+}
+
+
+pub fn get_hp_rate(structure: &screeps::objects::Structure) -> Option<u32> {
+    match structure.as_owned() {
+        Some(my_structure) => {
+            if my_structure.my() == false {
+                return None;
+            }
+
+            match structure.as_attackable() {
+                Some(attackable) => {
+                    if (attackable.hits() > 0) && (attackable.hits() < attackable.hits_max()) {
+                        return Some((attackable.hits()*10000)/attackable.hits_max());
+                    } else {
+                        return None;
+                    }
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+
+        None => {
+            match structure.as_attackable() {
+                Some(attackable) => {
+                    if (attackable.hits() > 0) && (attackable.hits() < attackable.hits_max()) {
+                        return Some((attackable.hits()*10000)/attackable.hits_max());
                     } else {
                         return None;
                     }
@@ -596,7 +940,7 @@ pub fn find_nearest_repairable_item_onlywall_repair_hp(
             let repair_hp = get_repairable_hp(chk_item);
             match repair_hp {
                 Some(hp) => {
-                    if hp >= (threshold - 1) {
+                    if hp >= threshold {
                         find_item_list.push((chk_item.clone(), 1));
                     }
                 }
@@ -641,8 +985,9 @@ pub fn find_nearest_repairable_item_onlywall_hp(
     return search_many(creep, find_item_list, option);
 }
 
-pub fn find_nearest_repairable_item_except_wall(
+pub fn find_nearest_repairable_item_except_wall_hp(
     creep: &screeps::objects::Creep,
+    threshold: u32
 ) -> screeps::pathfinder::SearchResults {
     let item_list = &creep
         .room()
@@ -654,7 +999,37 @@ pub fn find_nearest_repairable_item_except_wall(
     for chk_item in item_list {
         if chk_item.structure_type() != StructureType::Wall {
             if check_repairable(chk_item) {
-                find_item_list.push((chk_item.clone(), 1));
+                if get_hp_rate(chk_item).unwrap_or(0) <= threshold {
+                    find_item_list.push((chk_item.clone(), 1));
+                }
+            }
+        }
+    }
+
+    let option = SearchOptions::new()
+        .room_callback(calc_room_cost)
+        .plain_cost(2)
+        .swamp_cost(10);
+
+    return search_many(creep, find_item_list, option);
+}
+
+pub fn find_nearest_repairable_item_except_wall_dying(
+    creep: &screeps::objects::Creep
+) -> screeps::pathfinder::SearchResults {
+    let item_list = &creep
+        .room()
+        .expect("room is not visible to you")
+        .find(STRUCTURES);
+
+    let mut find_item_list = Vec::<(Structure, u32)>::new();
+
+    for chk_item in item_list {
+        if chk_item.structure_type() != StructureType::Wall {
+            if check_repairable(chk_item) {
+                if get_live_tickcount(chk_item).unwrap_or(10000) as u128 <= 500  {
+                    find_item_list.push((chk_item.clone(), 1));
+                }
             }
         }
     }
@@ -723,66 +1098,69 @@ pub fn find_nearest_construction_site(
 pub fn find_nearest_active_source(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
+    is_2nd_check:bool
 ) -> screeps::pathfinder::SearchResults {
     let mut find_item_list = Vec::<(Position, u32)>::new();
     let resource_type_list = make_resoucetype_list(&resource_kind);
 
-    // dropped resource.
-    let item_list = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(DROPPED_RESOURCES);
+    if is_2nd_check == false {
+        // dropped resource.
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(DROPPED_RESOURCES);
 
-    for chk_item in item_list.iter() {
-        for resource in resource_type_list.iter() {
-            if chk_item.resource_type() == *resource {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
+        for chk_item in item_list.iter() {
+            for resource in resource_type_list.iter() {
+                if chk_item.resource_type() == *resource {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
 
-                find_item_list.push((object.clone(), 1));
-                break;
+                    find_item_list.push((object.clone(), 1));
+                    break;
+                }
             }
         }
-    }
 
-    // TOMBSTONES.
-    let item_list = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(TOMBSTONES);
+        // TOMBSTONES.
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(TOMBSTONES);
 
-    for chk_item in item_list.iter() {
-        for resource in resource_type_list.iter() {
-            if chk_item.store_of(*resource) > 0 {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
+        for chk_item in item_list.iter() {
+            for resource in resource_type_list.iter() {
+                if chk_item.store_of(*resource) > 0 {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
 
-                find_item_list.push((object.clone(), 1));
-                break;
+                    find_item_list.push((object.clone(), 1));
+                    break;
+                }
             }
         }
-    }
 
-    // RUINs.
-    let item_list = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(RUINS);
+        // RUINs.
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(RUINS);
 
-    for chk_item in item_list.iter() {
-        for resource in resource_type_list.iter() {
-            if chk_item.store_of(*resource) > 0 {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
+        for chk_item in item_list.iter() {
+            for resource in resource_type_list.iter() {
+                if chk_item.store_of(*resource) > 0 {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
 
-                find_item_list.push((object.clone(), 1));
-                break;
+                    find_item_list.push((object.clone(), 1));
+                    break;
+                }
             }
         }
     }
@@ -862,9 +1240,72 @@ pub fn find_nearest_active_source(
 pub fn find_nearest_stored_source(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
+    is_2nd_check:bool
 ) -> screeps::pathfinder::SearchResults {
     let mut find_item_list = Vec::<(Position, u32)>::new();
     let resource_type_list = make_resoucetype_list(&resource_kind);
+
+    if is_2nd_check == false {
+        // dropped resource.
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(DROPPED_RESOURCES);
+
+        for chk_item in item_list.iter() {
+            for resource in resource_type_list.iter() {
+                if chk_item.resource_type() == *resource {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
+
+                    find_item_list.push((object.clone(), 1));
+                    break;
+                }
+            }
+        }
+
+        // TOMBSTONES.
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(TOMBSTONES);
+
+        for chk_item in item_list.iter() {
+            for resource in resource_type_list.iter() {
+                if chk_item.store_of(*resource) > 0 {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
+
+                    find_item_list.push((object.clone(), 1));
+                    break;
+                }
+            }
+        }
+
+        // RUINs.
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(RUINS);
+
+        for chk_item in item_list.iter() {
+            for resource in resource_type_list.iter() {
+                if chk_item.store_of(*resource) > 0 {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
+
+                    find_item_list.push((object.clone(), 1));
+                    break;
+                }
+            }
+        }
+    }
 
     let item_list = &creep
         .room()

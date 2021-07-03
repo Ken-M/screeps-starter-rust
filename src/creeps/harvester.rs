@@ -5,6 +5,7 @@ use screeps::{
     find, pathfinder::SearchResults, prelude::*, Creep, Part, ResourceType, ReturnCode,
     RoomObjectProperties, StructureType, Transferable,
 };
+use std::cmp::*;
 
 use crate::creeps::builder::*;
 
@@ -57,22 +58,11 @@ pub fn run_harvester(creep: &Creep) {
                         match structure.as_has_store() {
                             Some(has_store) => {
                                 if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0 {
-                                    if structure.structure_type() == StructureType::Container {
-                                        if structure.pos() == creep.pos() {
-                                            let r = creep.drop(ResourceType::Energy, None);
+                                    let r = creep.transfer_all(transf, ResourceType::Energy);
 
-                                            if r == ReturnCode::Ok {
-                                                info!("dropeed to container!!");
-                                                return;
-                                            }
-                                        }
-                                    } else {
-                                        let r = creep.transfer_all(transf, ResourceType::Energy);
-
-                                        if r == ReturnCode::Ok {
-                                            info!("transferd to my_structure!!");
-                                            return;
-                                        }
+                                    if r == ReturnCode::Ok {
+                                        info!("transferd to my_structure!!");
+                                        return;
                                     }
                                 }
                             }
@@ -90,7 +80,35 @@ pub fn run_harvester(creep: &Creep) {
             }
 
             None => {
-                //not mine.
+                match structure.as_transferable() {
+                    Some(transf) => {
+                        match structure.as_has_store() {
+                            Some(has_store) => {
+                                if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0 {
+                                    if structure.structure_type() == StructureType::Container {
+                                        if structure.pos() == creep.pos() {
+                                            let trans_amount:u32 = min(has_store.store_free_capacity(Some(ResourceType::Energy)) as u32, creep.store_of(ResourceType::Energy));
+                                            let r = creep.drop(ResourceType::Energy, Some(trans_amount));
+
+                                            if r == ReturnCode::Ok {
+                                                info!("dropeed to container!!");
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            None => {
+                                //no store.
+                            }
+                        }
+                    }
+
+                    None => {
+                        // my_struct is not transferable.
+                    }
+                }
             }
         }
     }
