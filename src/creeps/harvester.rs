@@ -81,7 +81,7 @@ pub fn run_harvester(creep: &Creep) {
 
             None => {
                 match structure.as_transferable() {
-                    Some(transf) => {
+                    Some(_transf) => {
                         match structure.as_has_store() {
                             Some(has_store) => {
                                 if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0 {

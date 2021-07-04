@@ -589,7 +589,7 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                         .get(structure.pos().x(), structure.pos().y());
 
                     match structure {
-                        Structure::Road(road) => match this_terrain {
+                        Structure::Road(_road) => match this_terrain {
                             Terrain::Plain => {
                                 return Some(
                                     ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 100),
@@ -607,14 +607,14 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                             }
                         },
 
-                        Structure::Container(container) => {
+                        Structure::Container(_container) => {
                             return Some(
                                 CONTAINER_DECAY_TIME_OWNED as u128
                                     * (attackable.hits() as u128 / CONTAINER_DECAY as u128),
                             );
                         }
 
-                        Structure::Rampart(ramport) => {
+                        Structure::Rampart(_ramport) => {
                             return Some(
                                 RAMPART_DECAY_TIME as u128
                                     * (attackable.hits() as u128 / RAMPART_DECAY_AMOUNT as u128),
@@ -639,7 +639,7 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                         .get(structure.pos().x(), structure.pos().y());
 
                     match structure {
-                        Structure::Road(road) => match this_terrain {
+                        Structure::Road(_road) => match this_terrain {
                             Terrain::Plain => {
                                 return Some(
                                     ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 100),
@@ -657,14 +657,14 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                             }
                         },
 
-                        Structure::Container(container) => {
+                        Structure::Container(_container) => {
                             return Some(
                                 CONTAINER_DECAY_TIME_OWNED as u128
                                     * (attackable.hits() as u128 / CONTAINER_DECAY as u128),
                             );
                         }
 
-                        Structure::Rampart(ramport) => {
+                        Structure::Rampart(_ramport) => {
                             return Some(
                                 RAMPART_DECAY_TIME as u128
                                     * (attackable.hits() as u128 / RAMPART_DECAY_AMOUNT as u128),
