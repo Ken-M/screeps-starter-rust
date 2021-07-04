@@ -39,18 +39,13 @@ pub fn run_repairer(creep: &Creep) {
 
     let mut is_skip_repair = false;
 
-    let room_name = &creep
-    .room()
-    .expect("room is not visible to you")
-    .name() ;
-
+    let room_name = &creep.room().expect("room is not visible to you").name();
 
     // 残り時間が短いものを優先.
     // Wall以外でまず確認.
     for structure in structures.iter() {
         if check_repairable(structure) {
             if get_live_tickcount(structure).unwrap_or(10000) as u128 <= 500 {
-
                 let r = creep.repair(structure);
 
                 if r == ReturnCode::Ok {
@@ -75,8 +70,9 @@ pub fn run_repairer(creep: &Creep) {
         for structure in structures.iter() {
             if structure.structure_type() != StructureType::Wall {
                 if check_repairable(structure) {
-                    if get_hp_rate(structure).unwrap_or(0) as u128 <= (get_hp_average_exceptwall(room_name) + 1) {
-
+                    if get_hp_rate(structure).unwrap_or(0) as u128
+                        <= (get_hp_average_exceptwall(room_name) + 1)
+                    {
                         let r = creep.repair(structure);
 
                         if r == ReturnCode::Ok {
@@ -156,7 +152,7 @@ pub fn run_repairer(creep: &Creep) {
 
                 match repair_hp {
                     Some(hp) => {
-                        if hp >= (get_repairable_hp_average_wall(room_name)-1) as u32 {
+                        if hp >= (get_repairable_hp_average_wall(room_name) - 1) as u32 {
                             let r = creep.repair(structure);
 
                             if r == ReturnCode::Ok {
@@ -192,7 +188,10 @@ pub fn run_repairer(creep: &Creep) {
         return;
     }
 
-    let res = find_nearest_repairable_item_except_wall_hp(&creep, (get_hp_average_exceptwall(room_name) + 1) as u32);
+    let res = find_nearest_repairable_item_except_wall_hp(
+        &creep,
+        (get_hp_average_exceptwall(room_name) + 1) as u32,
+    );
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res);
@@ -227,7 +226,10 @@ pub fn run_repairer(creep: &Creep) {
     }
 
     // Wall含め.
-    let res = find_nearest_repairable_item_onlywall_repair_hp(&creep, (get_repairable_hp_average_wall(room_name)-1) as u32);
+    let res = find_nearest_repairable_item_onlywall_repair_hp(
+        &creep,
+        (get_repairable_hp_average_wall(room_name) - 1) as u32,
+    );
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res);
@@ -237,7 +239,6 @@ pub fn run_repairer(creep: &Creep) {
 
         return;
     }
-
 
     run_upgrader(creep);
 }

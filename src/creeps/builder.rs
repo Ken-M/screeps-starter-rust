@@ -18,14 +18,12 @@ pub fn run_builder(creep: &Creep) {
         .expect("room is not visible to you")
         .find(MY_CONSTRUCTION_SITES);
 
-    let room_name = creep
-        .room()
-        .expect("room is not visible to you")
-        .name() ;
-
+    let room_name = creep.room().expect("room is not visible to you").name();
 
     for construction_site in construction_sites.iter() {
-        if (construction_site.progress_total() - construction_site.progress()) <= (get_construction_progress_average(&room_name) + 1) as u32 {
+        if (construction_site.progress_total() - construction_site.progress())
+            <= (get_construction_progress_average(&room_name) + 1) as u32
+        {
             let r = creep.build(construction_site);
             if r == ReturnCode::Ok {
                 info!("build to my_construction_sites!!");
@@ -34,7 +32,10 @@ pub fn run_builder(creep: &Creep) {
         }
     }
 
-    let res = find_nearest_construction_site(&creep, (get_construction_progress_average(&room_name) + 1) as u32);
+    let res = find_nearest_construction_site(
+        &creep,
+        (get_construction_progress_average(&room_name) + 1) as u32,
+    );
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -45,7 +46,6 @@ pub fn run_builder(creep: &Creep) {
 
         return;
     }
-
 
     // if nothing to do, act like repairer.
     run_repairer(creep);

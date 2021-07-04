@@ -123,10 +123,8 @@ pub fn do_spawn() {
 
         // 長距離攻撃がたりなければ装備.
         if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 4) {
-
             if sum_energy >= body_long_atk_cost {
-
-                let mut count = 0 ;
+                let mut count = 0;
 
                 while (sum_energy >= body_long_atk_cost)
                     && ((body.len() + body_long_atk_unit.len())
@@ -135,12 +133,11 @@ pub fn do_spawn() {
                     count += 1;
                     if count % 3 == 0 {
                         body.extend(body_unit.iter().cloned());
-                        sum_energy -= body_cost;             
+                        sum_energy -= body_cost;
                     } else {
                         body.extend(body_long_atk_unit.iter().cloned());
                         sum_energy -= body_long_atk_cost;
                     }
-
                 }
             } else {
                 if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 4) {
@@ -151,18 +148,17 @@ pub fn do_spawn() {
         // 短距離攻撃が足りなければ装備.
         } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 4) {
             if sum_energy >= body_short_atk_cost {
-
-                let mut count = 0 ;
+                let mut count = 0;
 
                 while (sum_energy >= body_short_atk_cost)
                     && ((body.len() + body_short_atk_unit.len())
                         < screeps::constants::MAX_CREEP_SIZE as usize)
                 {
                     count += 1;
-                    
+
                     if count % 3 == 0 {
                         body.extend(body_unit.iter().cloned());
-                        sum_energy -= body_cost;             
+                        sum_energy -= body_cost;
                     } else {
                         body.extend(body_short_atk_unit.iter().cloned());
                         sum_energy -= body_short_atk_cost;

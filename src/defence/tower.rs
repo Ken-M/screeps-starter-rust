@@ -9,7 +9,6 @@ use screeps::{
 
 pub fn run_tower() {
     for game_structure in screeps::game::structures::values() {
-
         if check_my_structure(&game_structure) == true {
             match game_structure {
                 Structure::Tower(my_tower) => {
@@ -19,10 +18,7 @@ pub fn run_tower() {
                         .expect("room is not visible to you")
                         .find(HOSTILE_CREEPS);
 
-                    let room_name = my_tower
-                        .room()
-                        .expect("room is not visible to you")
-                        .name() ;
+                    let room_name = my_tower.room().expect("room is not visible to you").name();
 
                     for enemy in enemies {
                         debug!("try attack enemy {}", my_tower.id());
@@ -30,7 +26,7 @@ pub fn run_tower() {
 
                         if r == ReturnCode::Ok {
                             info!("attack to enemy!!");
-                            return ;
+                            return;
                         }
                     }
 
@@ -47,7 +43,7 @@ pub fn run_tower() {
 
                             if r == ReturnCode::Ok {
                                 info!("heal my creep!!");
-                                return ;
+                                return;
                             }
                         }
                     }
@@ -67,11 +63,10 @@ pub fn run_tower() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
                                     if get_live_tickcount(structure).unwrap_or(10000) <= 500 {
-
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
                                             info!("repair my structure!!");
-                                            return ;
+                                            return;
                                         }
                                     }
                                 }
@@ -82,13 +77,13 @@ pub fn run_tower() {
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
-
-                                    if get_hp_rate(structure).unwrap_or(0) <= (get_hp_average_exceptwall(&room_name) + 1) as u32 {
-
+                                    if get_hp_rate(structure).unwrap_or(0)
+                                        <= (get_hp_average_exceptwall(&room_name) + 1) as u32
+                                    {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
                                             info!("repair my structure!!");
-                                            return ;
+                                            return;
                                         }
                                     }
                                 }
@@ -102,7 +97,7 @@ pub fn run_tower() {
                                     let r = my_tower.repair(structure);
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
-                                        return ;
+                                        return;
                                     }
                                 }
                             }
@@ -114,7 +109,7 @@ pub fn run_tower() {
                                     let r = my_tower.repair(structure);
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
-                                        return ;
+                                        return;
                                     }
                                 }
                             }
@@ -126,12 +121,15 @@ pub fn run_tower() {
 
                                 match repair_hp {
                                     Some(hp) => {
-                                        if hp >= (get_repairable_hp_average_wall(&room_name)-1) as u32 {
+                                        if hp
+                                            >= (get_repairable_hp_average_wall(&room_name) - 1)
+                                                as u32
+                                        {
                                             let r = my_tower.repair(structure);
 
                                             if r == ReturnCode::Ok {
                                                 info!("repair my structure!!");
-                                                return ;
+                                                return;
                                             }
                                         }
                                     }
@@ -139,7 +137,6 @@ pub fn run_tower() {
                                 }
                             }
                         }
-
                     }
                 }
 

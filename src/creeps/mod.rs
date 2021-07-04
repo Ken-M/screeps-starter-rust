@@ -19,9 +19,11 @@ enum AttackerKind {
     NONE,
 }
 
-
-
-fn reset_source_target(creep: &Creep, is_harvester:bool, harvest_kind: &ResourceKind) -> (SearchResults, Position) {
+fn reset_source_target(
+    creep: &Creep,
+    is_harvester: bool,
+    harvest_kind: &ResourceKind,
+) -> (SearchResults, Position) {
     debug!("harvesting : reset_source_target");
 
     if is_harvester == true {
@@ -46,7 +48,7 @@ fn reset_source_target(creep: &Creep, is_harvester:bool, harvest_kind: &Resource
 
             let ret_position = res.load_local_path().last().unwrap().clone();
             return (res, ret_position);
-        } 
+        }
 
         // storageをチェック.
         let res = find_nearest_stored_source(&creep, harvest_kind, true);
@@ -87,7 +89,7 @@ fn reset_source_target(creep: &Creep, is_harvester:bool, harvest_kind: &Resource
         }
 
         // active sourceをチェック.
-        let res = find_nearest_active_source(&creep, harvest_kind, true );
+        let res = find_nearest_active_source(&creep, harvest_kind, true);
         debug!(
             "harvesting : find_nearest_active_source result:{:?}",
             res.load_local_path()
@@ -107,7 +109,7 @@ fn reset_source_target(creep: &Creep, is_harvester:bool, harvest_kind: &Resource
 
             let ret_position = res.load_local_path().last().unwrap().clone();
             return (res, ret_position);
-        } 
+        }
     }
 
     //　やむなく枯渇sourceを選ぶ.
@@ -132,7 +134,6 @@ fn reset_source_target(creep: &Creep, is_harvester:bool, harvest_kind: &Resource
     //全部ダメならとりあえずその場待機.
     let res = find_path(&creep, &creep.pos(), 0);
     return (res, creep.pos().clone());
-
 }
 
 fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
@@ -315,7 +316,7 @@ pub fn creep_loop() {
         let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
         let mut harvest_kind: ResourceKind = ResourceKind::ENERGY;
 
-        let mut is_harvester =false ;
+        let mut is_harvester = false;
 
         role_string = role_and_attacker_kind.0;
         attacker_kind = role_and_attacker_kind.1;
@@ -345,21 +346,21 @@ pub fn creep_loop() {
                     num_harvester_mineral += 1;
                     harvest_kind = ResourceKind::MINELALS;
                     role_string = String::from("harvester_mineral");
-                    is_harvester = true ; 
+                    is_harvester = true;
                 } else {
                     creep.memory().set("role", "harvester");
                     num_harvester += 1;
                     role_string = String::from("harvester");
-                    is_harvester = true ; 
+                    is_harvester = true;
                 }
             }
 
             "harvester" => {
-                is_harvester = true ; 
+                is_harvester = true;
             }
 
             "harvester_mineral" => {
-                is_harvester = true ; 
+                is_harvester = true;
             }
 
             &_ => {
@@ -439,19 +440,23 @@ pub fn creep_loop() {
                                             debug!("re-check source :{}", defined_target_pos);
                                             creep.memory().del("target_pos");
 
-                                            let reset_result =
-                                                reset_source_target(&creep, is_harvester, &harvest_kind);
+                                            let reset_result = reset_source_target(
+                                                &creep,
+                                                is_harvester,
+                                                &harvest_kind,
+                                            );
                                             path_search_result = reset_result.0;
                                             defined_target_pos = reset_result.1;
 
-                                            break ;
+                                            break;
                                         }
                                     }
                                 }
 
                                 Err(_err) => {
                                     //ロードに成功して値もあったけどDeSerializeできなかった.
-                                    let reset_result = reset_source_target(&creep, is_harvester, &harvest_kind);
+                                    let reset_result =
+                                        reset_source_target(&creep, is_harvester, &harvest_kind);
                                     path_search_result = reset_result.0;
                                     defined_target_pos = reset_result.1;
                                 }
@@ -460,7 +465,8 @@ pub fn creep_loop() {
 
                         None => {
                             //ロードに成功したけど値がない.
-                            let reset_result = reset_source_target(&creep, is_harvester, &harvest_kind);
+                            let reset_result =
+                                reset_source_target(&creep, is_harvester, &harvest_kind);
                             path_search_result = reset_result.0;
                             defined_target_pos = reset_result.1;
                         }
