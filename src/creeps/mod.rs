@@ -240,7 +240,7 @@ pub fn creep_loop() {
 
     for creep in screeps::game::creeps::values() {
         let name = creep.name();
-        info!("checking creep {}", name);
+        debug!("checking creep {}", name);
 
         let mut attacker_kind: AttackerKind = AttackerKind::NONE;
         let mut role_string = String::from("none");
@@ -250,7 +250,7 @@ pub fn creep_loop() {
         role_string = role_and_attacker_kind.0;
         attacker_kind = role_and_attacker_kind.1;
 
-        info!("role:{:?}:atk:{:?}", role_string, attacker_kind);
+        debug!("role:{:?}:atk:{:?}", role_string, attacker_kind);
 
         match attacker_kind {
             AttackerKind::SHORT => {

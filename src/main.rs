@@ -39,7 +39,7 @@ fn main() {
 }
 
 fn game_loop() {
-    info!("loop starting! CPU: {}", screeps::game::cpu::get_used());
+    info!("loop starting! CPU: {}, Bucket:{}", screeps::game::cpu::get_used(), screeps::game::cpu::bucket());
 
     util::clear_init_flag();
 

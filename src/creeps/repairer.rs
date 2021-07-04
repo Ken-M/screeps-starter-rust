@@ -182,7 +182,6 @@ pub fn run_repairer(creep: &Creep) {
 
     //----------------------------------------
     // Wall以外でまず確認.
-    debug!("1");
     let res = find_nearest_repairable_item_except_wall_dying(&creep);
 
     if res.load_local_path().len() > 0 {
@@ -193,7 +192,6 @@ pub fn run_repairer(creep: &Creep) {
         return;
     }
 
-    debug!("2");
     let res = find_nearest_repairable_item_except_wall_hp(&creep, (get_hp_average_exceptwall(room_name) + 1) as u32);
 
     if res.load_local_path().len() > 0 {
@@ -205,7 +203,6 @@ pub fn run_repairer(creep: &Creep) {
     }
 
     // Wall含め 1k.
-    debug!("3");
     let res = find_nearest_repairable_item_onlywall_hp(&creep, 5000);
 
     if res.load_local_path().len() > 0 {
@@ -218,7 +215,6 @@ pub fn run_repairer(creep: &Creep) {
     }
 
     // Wall含め 1m.
-    debug!("4");
     let res = find_nearest_repairable_item_onlywall_hp(&creep, 10000);
 
     if res.load_local_path().len() > 0 {
@@ -231,7 +227,6 @@ pub fn run_repairer(creep: &Creep) {
     }
 
     // Wall含め.
-    debug!("5");
     let res = find_nearest_repairable_item_onlywall_repair_hp(&creep, (get_repairable_hp_average_wall(room_name)-1) as u32);
 
     if res.load_local_path().len() > 0 {

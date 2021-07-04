@@ -663,7 +663,7 @@ pub fn get_hp_rate(structure: &screeps::objects::Structure) -> Option<u32> {
             match structure.as_attackable() {
                 Some(attackable) => {
                     if (attackable.hits() > 0) && (attackable.hits() < attackable.hits_max()) {
-                        return Some((attackable.hits()*10000)/attackable.hits_max());
+                        return Some(((attackable.hits() as u128 *10000)/attackable.hits_max() as u128) as u32);
                     } else {
                         return None;
                     }
@@ -679,7 +679,7 @@ pub fn get_hp_rate(structure: &screeps::objects::Structure) -> Option<u32> {
             match structure.as_attackable() {
                 Some(attackable) => {
                     if (attackable.hits() > 0) && (attackable.hits() < attackable.hits_max()) {
-                        return Some((attackable.hits()*10000)/attackable.hits_max());
+                        return Some(((attackable.hits() as u128 *10000)/attackable.hits_max() as u128) as u32);
                     } else {
                         return None;
                     }
@@ -1319,7 +1319,7 @@ pub fn find_nearest_stored_source(
             || (*resource_kind == ResourceKind::ENERGY
                 && chk_item.structure_type() == StructureType::Terminal)
         {
-            if check_my_structure(chk_item) {
+            if check_my_structure(chk_item) || (chk_item.structure_type() == StructureType::Container) {
                 for resource_type in resource_type_list.iter() {
                     if check_stored(chk_item, resource_type) {
                         let mut object: Position = creep.pos();
@@ -1327,7 +1327,12 @@ pub fn find_nearest_stored_source(
                         object.set_y(chk_item.pos().y());
                         object.set_room_name(chk_item.room().unwrap().name());
 
-                        find_item_list.push((object.clone(), 1));
+                        let mut dist = 1;
+                        if chk_item.structure_type() == StructureType::Container {
+                            dist = 0;
+                        }
+
+                        find_item_list.push((object.clone(), dist));
                         break;
                     }
                 }
