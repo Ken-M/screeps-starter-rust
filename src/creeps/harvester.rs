@@ -167,6 +167,67 @@ pub fn run_harvester_spawn(creep: &Creep) {
         }
     }
 
+    // extention.
+    let my_structures = &creep
+        .room()
+        .expect("room is not visible to you")
+        .find(STRUCTURES);
+
+    for my_structure in my_structures.iter() {
+        if my_structure.structure_type() == StructureType::Extension {
+            debug!("try transfer to extention {}", name);
+            match my_structure.as_owned() {
+                Some(my_extention) => {
+                    if my_extention.my() == true {
+                        match my_structure.as_transferable() {
+                            Some(transf) => {
+                                match my_structure.as_has_store() {
+                                    Some(has_store) => {
+                                        if has_store.store_free_capacity(Some(ResourceType::Energy))
+                                            > 0
+                                        {
+                                            let r =
+                                                creep.transfer_all(transf, ResourceType::Energy);
+
+                                            if r == ReturnCode::Ok {
+                                                info!("transferd to extention!!");
+                                                return;
+                                            }
+                                        }
+                                    }
+
+                                    None => {
+                                        //no store.
+                                    }
+                                }
+                            }
+
+                            None => {
+                                // my_struct is not transferable
+                            }
+                        }
+                    }
+                }
+
+                None => {
+                    //not my structure.
+                }
+            }
+        }
+
+    }
+
+    let res =
+        find_nearest_transferable_structure(&creep, &StructureType::Extension, &ResourceType::Energy);
+    debug!("go to:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res);
+        if res == ReturnCode::Ok {
+            return;
+        }
+    }
+
     debug!("check towers {}", name);
 
     let my_towers = &creep
