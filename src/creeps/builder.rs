@@ -20,9 +20,13 @@ pub fn run_builder(creep: &Creep) {
 
     let room_name = creep.room().expect("room is not visible to you").name();
 
+    let stats = get_construction_progress_average(&room_name) ;
+    let threshold = (stats.0 + stats.1)/2;
+
     for construction_site in construction_sites.iter() {
+
         if (construction_site.progress_total() - construction_site.progress())
-            <= (get_construction_progress_average(&room_name) + 1) as u32
+            <= (threshold + 1) as u32
         {
             let r = creep.build(construction_site);
             if r == ReturnCode::Ok {
@@ -34,7 +38,7 @@ pub fn run_builder(creep: &Creep) {
 
     let res = find_nearest_construction_site(
         &creep,
-        (get_construction_progress_average(&room_name) + 1) as u32,
+        (threshold + 1) as u32,
     );
     debug!("go to:{:?}", res.load_local_path());
 

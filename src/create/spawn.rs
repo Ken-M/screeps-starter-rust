@@ -122,7 +122,7 @@ pub fn do_spawn() {
         }
 
         // 長距離攻撃がたりなければ装備.
-        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 4) {
+        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 5) {
             if sum_energy >= body_long_atk_cost {
                 let mut count = 0;
 
@@ -140,13 +140,13 @@ pub fn do_spawn() {
                     }
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 4) {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
                     continue;
                 }
             }
 
         // 短距離攻撃が足りなければ装備.
-        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 4) {
+        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 5) {
             if sum_energy >= body_short_atk_cost {
                 let mut count = 0;
 
@@ -165,7 +165,7 @@ pub fn do_spawn() {
                     }
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 4) {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
                     continue;
                 }
             }

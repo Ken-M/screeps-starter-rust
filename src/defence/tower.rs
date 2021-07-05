@@ -74,11 +74,14 @@ pub fn run_tower() {
                         }
 
                         // Wall以外でまず確認.
+                        let stats =get_hp_average_exceptwall(&room_name) ;
+                        let threshold = (stats.0 + stats.1)/2 ;
+
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
                                     if get_hp_rate(structure).unwrap_or(0)
-                                        <= (get_hp_average_exceptwall(&room_name) + 1) as u32
+                                        <= (threshold + 1) as u32
                                     {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
@@ -115,14 +118,16 @@ pub fn run_tower() {
                             }
                         }
 
+                        let stats =get_repairable_hp_average_wall(&room_name) ;
+                        let threshold = (stats.0 + stats.1)/2 ;
+
                         for structure in my_structures.iter() {
                             if structure.structure_type() == StructureType::Wall {
                                 let repair_hp = get_repairable_hp(structure);
 
                                 match repair_hp {
                                     Some(hp) => {
-                                        if hp
-                                            >= (get_repairable_hp_average_wall(&room_name) - 1)
+                                        if hp >= (threshold - 1)
                                                 as u32
                                         {
                                             let r = my_tower.repair(structure);
