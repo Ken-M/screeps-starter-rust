@@ -74,14 +74,13 @@ pub fn run_tower() {
                         }
 
                         // Wall以外でまず確認.
-                        let stats =get_hp_average_exceptwall(&room_name) ;
-                        let threshold = (stats.0 + stats.1)/2 ;
+                        let stats = get_hp_average_exceptwall(&room_name);
+                        let threshold = (stats.0 + stats.1) / 2;
 
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
-                                    if get_hp_rate(structure).unwrap_or(0)
-                                        <= (threshold + 1) as u32
+                                    if get_hp_rate(structure).unwrap_or(0) <= (threshold + 1) as u32
                                     {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
@@ -118,8 +117,8 @@ pub fn run_tower() {
                             }
                         }
 
-                        let stats =get_repairable_hp_average_wall(&room_name) ;
-                        let threshold = (stats.0 + stats.1)/2 ;
+                        let stats = get_repairable_hp_average_wall(&room_name);
+                        let threshold = (stats.0 + stats.1) / 2;
 
                         for structure in my_structures.iter() {
                             if structure.structure_type() == StructureType::Wall {
@@ -127,9 +126,7 @@ pub fn run_tower() {
 
                                 match repair_hp {
                                     Some(hp) => {
-                                        if hp >= (threshold - 1)
-                                                as u32
-                                        {
+                                        if hp >= (threshold - 1) as u32 {
                                             let r = my_tower.repair(structure);
 
                                             if r == ReturnCode::Ok {

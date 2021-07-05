@@ -33,14 +33,12 @@ struct GlobalInitFlag {
 
 lazy_static! {
     static ref MAP_CACHE: RwLock<Data> = RwLock::new(HashMap::new());
-
     static ref CONSTRUCTION_PROGRESS_AVERAGE_CACHE: RwLock<ConstructionProgressAverage> =
         RwLock::new(HashMap::new());
     static ref REPAIRABLE_HP_AVERAGE_WALL_CACHE: RwLock<RepairableHpAverage_Wall> =
         RwLock::new(HashMap::new());
     static ref STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE: RwLock<StructureHpAverage_ExceptWall> =
         RwLock::new(HashMap::new());
-
     static ref CONSTRUCTION_PROGRESS_MIN_CACHE: RwLock<ConstructionProgressMin> =
         RwLock::new(HashMap::new());
     static ref REPAIRABLE_HP_MAX_WALL_CACHE: RwLock<RepairableHpMax_Wall> =
@@ -53,7 +51,6 @@ pub fn clear_init_flag() {
     let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
     cost_matrix_cache.clear();
 
-
     let mut construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.write().unwrap();
     construction_progress_average.clear();
 
@@ -63,7 +60,6 @@ pub fn clear_init_flag() {
     let mut structure_hp_average_exceptwall =
         STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.write().unwrap();
     structure_hp_average_exceptwall.clear();
-
 
     let mut construction_progress_min = CONSTRUCTION_PROGRESS_MIN_CACHE.write().unwrap();
     construction_progress_min.clear();
@@ -103,13 +99,11 @@ pub fn calc_average(room_name: &RoomName) {
             let mut total_repair_hp: u128 = 0;
             let mut total_hp: u128 = 0;
 
-            let mut repair_hp_max:u128 = 0;
-            let mut hp_min : u128 = 0;
+            let mut repair_hp_max: u128 = 0;
+            let mut hp_min: u128 = 0;
 
             let mut struct_count_wall: u128 = 0;
             let mut struct_count_except_wall: u128 = 0;
-
-
 
             for chk_struct in structures {
                 if chk_struct.structure_type() == StructureType::Wall {
@@ -118,7 +112,7 @@ pub fn calc_average(room_name: &RoomName) {
                     match repair_hp {
                         Some(hp) => {
                             struct_count_wall += 1 as u128;
-                            total_repair_hp += hp as u128 ;
+                            total_repair_hp += hp as u128;
 
                             if (repair_hp_max < hp as u128) || (repair_hp_max == 0) {
                                 repair_hp_max = hp as u128;
@@ -132,10 +126,10 @@ pub fn calc_average(room_name: &RoomName) {
                     match cur_hp {
                         Some(hp) => {
                             struct_count_except_wall += 1 as u128;
-                            total_hp += hp as u128 ;
+                            total_hp += hp as u128;
 
                             if (hp_min > hp as u128) || (hp_min == 0) {
-                                hp_min = hp as u128 ;
+                                hp_min = hp as u128;
                             }
                         }
                         None => {}
@@ -144,17 +138,17 @@ pub fn calc_average(room_name: &RoomName) {
             }
 
             let mut sum_of_progress: u128 = 0;
-            let mut progress_min:u128=0;
+            let mut progress_min: u128 = 0;
             let mut construction_count: u128 = 0;
 
             for construction_site in construction_sites.iter() {
                 let left_progress = construction_site.progress_total() as u128
-                - construction_site.progress() as u128 ;
+                    - construction_site.progress() as u128;
                 sum_of_progress += left_progress;
                 construction_count += 1;
 
-                if (progress_min > left_progress ) || (progress_min == 0) {
-                    progress_min = left_progress  ;
+                if (progress_min > left_progress) || (progress_min == 0) {
+                    progress_min = left_progress;
                 }
             }
 
@@ -167,8 +161,6 @@ pub fn calc_average(room_name: &RoomName) {
                     total_repair_hp / struct_count_wall,
                     repair_hp_max
                 );
-
-
             } else {
                 repairable_hp_average_wall.insert(*room_name, 0);
                 repairable_hp_max_wall.insert(*room_name, 0);
@@ -178,8 +170,7 @@ pub fn calc_average(room_name: &RoomName) {
                 structure_hp_average_exceptwall
                     .insert(*room_name, total_hp / struct_count_except_wall);
 
-                structure_hp_min_exceptwall
-                    .insert(*room_name, hp_min);                    
+                structure_hp_min_exceptwall.insert(*room_name, hp_min);
                 info!(
                     "{:?}: structure_hp_average_exceptwall:{:?}/min:{:?}",
                     room_name,
@@ -188,7 +179,7 @@ pub fn calc_average(room_name: &RoomName) {
                 );
             } else {
                 structure_hp_average_exceptwall.insert(*room_name, 0);
-                structure_hp_min_exceptwall.insert(*room_name, 0);    
+                structure_hp_min_exceptwall.insert(*room_name, 0);
             }
 
             if construction_count > 0 {
@@ -229,7 +220,7 @@ pub fn get_repairable_hp_average_wall(room_name: &RoomName) -> (u128, u128) {
                     }
 
                     None => {}
-                }                
+                }
             }
             None => {}
         }
@@ -254,7 +245,7 @@ pub fn get_repairable_hp_average_wall(room_name: &RoomName) -> (u128, u128) {
                     }
 
                     None => {}
-                }                
+                }
             }
             None => {}
         }
@@ -281,7 +272,7 @@ pub fn get_hp_average_exceptwall(room_name: &RoomName) -> (u128, u128) {
                     }
 
                     None => {}
-                }                
+                }
             }
             None => {}
         }
@@ -306,7 +297,7 @@ pub fn get_hp_average_exceptwall(room_name: &RoomName) -> (u128, u128) {
                     }
 
                     None => {}
-                }                
+                }
             }
             None => {}
         }
@@ -333,7 +324,7 @@ pub fn get_construction_progress_average(room_name: &RoomName) -> (u128, u128) {
                     }
 
                     None => {}
-                }                
+                }
             }
             None => {}
         }
@@ -358,12 +349,11 @@ pub fn get_construction_progress_average(room_name: &RoomName) -> (u128, u128) {
                     }
 
                     None => {}
-                }                
+                }
             }
             None => {}
         }
     }
-
 
     return (0, 0);
 }

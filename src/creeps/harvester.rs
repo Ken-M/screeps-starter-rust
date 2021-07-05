@@ -214,11 +214,13 @@ pub fn run_harvester_spawn(creep: &Creep) {
                 }
             }
         }
-
     }
 
-    let res =
-        find_nearest_transferable_structure(&creep, &StructureType::Extension, &ResourceType::Energy);
+    let res = find_nearest_transferable_structure(
+        &creep,
+        &StructureType::Extension,
+        &ResourceType::Energy,
+    );
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
