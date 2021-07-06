@@ -476,22 +476,10 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
 
             None => {                
                 // 地形データだけを反映.
-                info!("Room:{}, only terrain matrix.", room_name);
+                info!("Room:{}, blocked.", room_name);
                 for x_pos in 0..ROOM_SIZE_X {
                     for y_pos in 0..ROOM_SIZE_Y {
-                        let this_terrain = screeps::game::map::get_room_terrain(room_name).get(x_pos as u32, y_pos as u32);
-
-                        match this_terrain {
-                            Terrain::Plain => {
-                                cost_matrix.set(x_pos, y_pos, 2);
-                            }
-                            Terrain::Swamp => {
-                                cost_matrix.set(x_pos, y_pos, 10);
-                            }
-                            Terrain::Wall => {
-                                cost_matrix.set(x_pos, y_pos, 0xff);
-                            }
-                        }
+                        cost_matrix.set(x_pos, y_pos, 0xff);
                     }
                 }
             }
