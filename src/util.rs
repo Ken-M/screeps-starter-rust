@@ -474,7 +474,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                 }
             }
 
-            None => {                
+            None => {
                 // 地形データだけを反映.
                 info!("Room:{}, blocked.", room_name);
                 for x_pos in 0..ROOM_SIZE_X {
