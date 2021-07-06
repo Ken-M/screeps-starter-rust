@@ -9,7 +9,7 @@ use screeps::{
     RoomObjectProperties, StructureType,
 };
 
-const MAX_NUM_OF_CREEPS: u32 = 20;
+const MAX_NUM_OF_CREEPS: u32 = 15;
 
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= MAX_NUM_OF_CREEPS as usize {
@@ -52,6 +52,11 @@ pub fn do_spawn() {
 
     let num_total_creep = screeps::game::creeps::values().len() as i32;
 
+    let cap_worker_carry:i32 = screeps::memory::root()
+    .i32("cap_worker_carry")
+    .unwrap_or(Some(0))
+    .unwrap_or(0);
+
     for spawn in screeps::game::spawns::values() {
         info!("running spawn {}", spawn.name());
 
@@ -83,14 +88,14 @@ pub fn do_spawn() {
             .find(STRUCTURES);
 
         let mut sum_energy = spawn.store_of(ResourceType::Energy);
-        let mut num_extention = 0 ;
+        let mut extention_cap = 0 ;
 
         for structure in all_structures {
             match structure {
                 Structure::Extension(extention) => {
                     if extention.my() == true {
                         sum_energy += extention.store_of(ResourceType::Energy);
-                        num_extention += 1 ;
+                        extention_cap += extention.store_capacity(Some(ResourceType::Energy)) ;
                     }
                 }
                 _ => {
@@ -115,7 +120,7 @@ pub fn do_spawn() {
         debug!("spawn calc sum_energy:{:?}", sum_energy);
 
 
-        if ((num_harvester + num_harvester_spawn) >= 6) && (num_extention >= 6){
+        if (cap_worker_carry as f64 >= (body_cost as f64 * 2.0) * 0.6) && (extention_cap as f64 >= (body_cost as f64 * 2.0) * 0.6){
             if sum_energy < body_cost * 2 {
                 continue ;
             }

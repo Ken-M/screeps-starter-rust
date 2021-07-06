@@ -239,6 +239,8 @@ pub fn creep_loop() {
     let mut opt_num_attackable_short: i32 = 0;
     let mut opt_num_attackable_long: i32 = 0;
 
+    let mut cap_worker_carry : u128 = 0 ;
+
     for creep in screeps::game::creeps::values() {
         let name = creep.name();
         debug!("checking creep {}", name);
@@ -270,10 +272,12 @@ pub fn creep_loop() {
         match role_string.as_str() {
             "harvester" => {
                 num_harvester += 1;
+                cap_worker_carry += creep.store_capacity(None) as u128 ;
             }
 
             "harvester_spawn" => {
                 num_harvester_spawn += 1;
+                cap_worker_carry += creep.store_capacity(None) as u128;
             }
 
             "harvester_mineral" => {
@@ -327,6 +331,7 @@ pub fn creep_loop() {
                     creep.memory().set("role", "harvester_spawn");
                     num_harvester_spawn += 1;
                     role_string = String::from("harvester_spawn");
+                    cap_worker_carry += creep.store_capacity(None) as u128;
                 } else if num_upgrader < (screeps::game::creeps::values().len() as i32 / 6) + 1 {
                     creep.memory().set("role", "upgrader");
                     num_upgrader += 1;
@@ -352,6 +357,7 @@ pub fn creep_loop() {
                     num_harvester += 1;
                     role_string = String::from("harvester");
                     is_harvester = true;
+                    cap_worker_carry += creep.store_capacity(None) as u128;
                 }
             }
 
@@ -788,4 +794,6 @@ pub fn creep_loop() {
     screeps::memory::root().set("opt_num_attackable_long", opt_num_attackable_long);
 
     screeps::memory::root().set("total_num", screeps::game::creeps::values().len() as i32);
+    screeps::memory::root().set("cap_worker_carry", cap_worker_carry as i32);
+
 }
