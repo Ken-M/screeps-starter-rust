@@ -62,7 +62,7 @@ pub fn run_tower() {
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
-                                    if get_live_tickcount(structure).unwrap_or(10000) <= 500 {
+                                    if get_live_tickcount(structure).unwrap_or(10000) <= 1000 {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
                                             info!("repair my structure!!");

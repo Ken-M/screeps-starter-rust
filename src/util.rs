@@ -466,7 +466,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                             let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8);
                             // すでに通行不可としてマークされているマスは触らない.
                             if cur_cost < 0xff {
-                                let new_cost = cur_cost + 20;
+                                let new_cost = cur_cost + 15;
                                 cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost);
                             }
                         }
@@ -474,7 +474,27 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                 }
             }
 
-            None => {}
+            None => {                
+                // 地形データだけを反映.
+                info!("Room:{}, only terrain matrix.", room_name);
+                for x_pos in 0..ROOM_SIZE_X {
+                    for y_pos in 0..ROOM_SIZE_Y {
+                        let this_terrain = screeps::game::map::get_room_terrain(room_name).get(x_pos as u32, y_pos as u32);
+
+                        match this_terrain {
+                            Terrain::Plain => {
+                                cost_matrix.set(x_pos, y_pos, 2);
+                            }
+                            Terrain::Swamp => {
+                                cost_matrix.set(x_pos, y_pos, 10);
+                            }
+                            Terrain::Wall => {
+                                cost_matrix.set(x_pos, y_pos, 0xff);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         {
@@ -1081,7 +1101,7 @@ pub fn find_nearest_repairable_item_onlywall_repair_hp(
             match repair_hp {
                 Some(hp) => {
                     if hp >= threshold {
-                        find_item_list.push((chk_item.clone(), 1));
+                        find_item_list.push((chk_item.clone(), 3));
                     }
                 }
 
@@ -1112,7 +1132,7 @@ pub fn find_nearest_repairable_item_onlywall_hp(
     for chk_item in item_list {
         if chk_item.structure_type() == StructureType::Wall {
             if check_repairable_hp(chk_item, threshold) {
-                find_item_list.push((chk_item.clone(), 1));
+                find_item_list.push((chk_item.clone(), 3));
             }
         }
     }
@@ -1140,7 +1160,7 @@ pub fn find_nearest_repairable_item_except_wall_hp(
         if chk_item.structure_type() != StructureType::Wall {
             if check_repairable(chk_item) {
                 if get_hp_rate(chk_item).unwrap_or(0) <= threshold {
-                    find_item_list.push((chk_item.clone(), 1));
+                    find_item_list.push((chk_item.clone(), 3));
                 }
             }
         }
@@ -1167,8 +1187,8 @@ pub fn find_nearest_repairable_item_except_wall_dying(
     for chk_item in item_list {
         if chk_item.structure_type() != StructureType::Wall {
             if check_repairable(chk_item) {
-                if get_live_tickcount(chk_item).unwrap_or(10000) as u128 <= 500 {
-                    find_item_list.push((chk_item.clone(), 1));
+                if get_live_tickcount(chk_item).unwrap_or(10000) as u128 <= 1000 {
+                    find_item_list.push((chk_item.clone(), 3));
                 }
             }
         }
@@ -1223,7 +1243,7 @@ pub fn find_nearest_construction_site(
 
     for chk_item in item_list.iter() {
         if (chk_item.progress_total() - chk_item.progress()) <= threshold {
-            find_item_list.push((chk_item.clone(), 1));
+            find_item_list.push((chk_item.clone(), 3));
         }
     }
 

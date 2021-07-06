@@ -24,11 +24,11 @@ pub fn do_spawn() {
         .i32("num_builder")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let _num_harvester: i32 = screeps::memory::root()
+    let num_harvester: i32 = screeps::memory::root()
         .i32("num_harvester")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let _num_harvester_spawn: i32 = screeps::memory::root()
+    let num_harvester_spawn: i32 = screeps::memory::root()
         .i32("num_harvester_spawn")
         .unwrap_or(Some(0))
         .unwrap_or(0);
@@ -83,12 +83,14 @@ pub fn do_spawn() {
             .find(STRUCTURES);
 
         let mut sum_energy = spawn.store_of(ResourceType::Energy);
+        let mut num_extention = 0 ;
 
         for structure in all_structures {
             match structure {
                 Structure::Extension(extention) => {
                     if extention.my() == true {
                         sum_energy += extention.store_of(ResourceType::Energy);
+                        num_extention += 1 ;
                     }
                 }
                 _ => {
@@ -111,6 +113,13 @@ pub fn do_spawn() {
         let mut body = Vec::new();
 
         debug!("spawn calc sum_energy:{:?}", sum_energy);
+
+
+        if ((num_harvester + num_harvester_spawn) >= 6) && (num_extention >= 6){
+            if sum_energy < body_cost * 2 {
+                continue ;
+            }
+        }
 
         // とりあえず基本セットをつける.
         if sum_energy >= body_cost {

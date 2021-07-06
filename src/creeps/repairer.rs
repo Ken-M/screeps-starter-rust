@@ -45,7 +45,7 @@ pub fn run_repairer(creep: &Creep) {
     // Wall以外でまず確認.
     for structure in structures.iter() {
         if check_repairable(structure) {
-            if get_live_tickcount(structure).unwrap_or(10000) as u128 <= 500 {
+            if get_live_tickcount(structure).unwrap_or(10000) as u128 <= 1000 {
                 let r = creep.repair(structure);
 
                 if r == ReturnCode::Ok {
