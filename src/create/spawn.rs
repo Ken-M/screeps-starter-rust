@@ -61,7 +61,10 @@ pub fn do_spawn() {
         info!("running spawn {}", spawn.name());
 
         // check got attacked.
-        if (spawn.hits() < spawn.hits_max()) || ((num_total_creep as u32) < MAX_NUM_OF_CREEPS / 2) {
+        if (spawn.hits() < spawn.hits_max())
+            || ((num_total_creep as u32) < MAX_NUM_OF_CREEPS / 2)
+            || ((opt_num_attackable_short + opt_num_attackable_long) <= 0)
+        {
             info!("got attacked!!");
 
             let all_structures = spawn
@@ -88,7 +91,7 @@ pub fn do_spawn() {
             .find(STRUCTURES);
 
         let mut sum_energy = spawn.store_of(ResourceType::Energy);
-        let mut extention_cap = 0;
+        let mut extention_cap = spawn.store_capacity(Some(ResourceType::Energy));
 
         for structure in all_structures {
             match structure {
@@ -118,11 +121,16 @@ pub fn do_spawn() {
         let mut body = Vec::new();
 
         debug!("spawn calc sum_energy:{:?}", sum_energy);
+        let min_basic_body_set = std::cmp::min(
+            ((cap_worker_carry as f64) / (body_cost as f64 * 0.6)) as u32,
+            ((extention_cap as f64) / (body_cost as f64)) as u32,
+        );
 
-        if (cap_worker_carry as f64 >= (body_cost as f64 * 2.0) * 0.6)
-            && (extention_cap as f64 >= (body_cost as f64 * 2.0) * 0.6)
+        info!("min basic body set:{:?}", min_basic_body_set);
+        if (cap_worker_carry as f64 >= (body_cost as f64 * min_basic_body_set as f64) * 0.6)
+            && (extention_cap as f64 >= (body_cost as f64 * min_basic_body_set as f64))
         {
-            if sum_energy < body_cost * 2 {
+            if sum_energy < body_cost * min_basic_body_set {
                 continue;
             }
         }
@@ -137,7 +145,7 @@ pub fn do_spawn() {
         }
 
         // 長距離攻撃がたりなければ装備.
-        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 5) {
+        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 3) {
             if sum_energy >= body_long_atk_cost {
                 let mut count = 0;
 
@@ -155,13 +163,13 @@ pub fn do_spawn() {
                     }
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3) {
                     continue;
                 }
             }
 
         // 短距離攻撃が足りなければ装備.
-        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 5) {
+        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 3) {
             if sum_energy >= body_short_atk_cost {
                 let mut count = 0;
 
@@ -180,7 +188,7 @@ pub fn do_spawn() {
                     }
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 5) {
+                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3) {
                     continue;
                 }
             }
