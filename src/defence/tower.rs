@@ -9,6 +9,8 @@ use screeps::{
 
 pub fn run_tower() {
     for game_structure in screeps::game::structures::values() {
+        let mut is_done = false;
+
         if check_my_structure(&game_structure) == true {
             match game_structure {
                 Structure::Tower(my_tower) => {
@@ -26,8 +28,13 @@ pub fn run_tower() {
 
                         if r == ReturnCode::Ok {
                             info!("attack to enemy!!");
-                            return;
+                            is_done = true;
+                            break;
                         }
+                    }
+
+                    if is_done {
+                        continue;
                     }
 
                     debug!("heal creeps {}", my_tower.id());
@@ -43,9 +50,13 @@ pub fn run_tower() {
 
                             if r == ReturnCode::Ok {
                                 info!("heal my creep!!");
-                                return;
+                                is_done = true;
+                                break;
                             }
                         }
+                    }
+                    if is_done {
+                        continue;
                     }
 
                     if my_tower.store_of(ResourceType::Energy)
@@ -66,11 +77,15 @@ pub fn run_tower() {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
                                             info!("repair my structure!!");
-                                            return;
+                                            is_done = true;
+                                            break;
                                         }
                                     }
                                 }
                             }
+                        }
+                        if is_done {
+                            continue;
                         }
 
                         // Wall以外でまず確認.
@@ -85,11 +100,15 @@ pub fn run_tower() {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
                                             info!("repair my structure!!");
-                                            return;
+                                            is_done = true;
+                                            break;
                                         }
                                     }
                                 }
                             }
+                        }
+                        if is_done {
+                            continue;
                         }
 
                         // Wall含め.
@@ -99,10 +118,14 @@ pub fn run_tower() {
                                     let r = my_tower.repair(structure);
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
-                                        return;
+                                        is_done = true;
+                                        break;
                                     }
                                 }
                             }
+                        }
+                        if is_done {
+                            continue;
                         }
 
                         for structure in my_structures.iter() {
@@ -111,10 +134,14 @@ pub fn run_tower() {
                                     let r = my_tower.repair(structure);
                                     if r == ReturnCode::Ok {
                                         info!("repair my structure!!");
-                                        return;
+                                        is_done = true;
+                                        break;
                                     }
                                 }
                             }
+                        }
+                        if is_done {
+                            continue;
                         }
 
                         let stats = get_repairable_hp_average_wall(&room_name);
@@ -131,13 +158,17 @@ pub fn run_tower() {
 
                                             if r == ReturnCode::Ok {
                                                 info!("repair my structure!!");
-                                                return;
+                                                is_done = true;
+                                                break;
                                             }
                                         }
                                     }
                                     None => {}
                                 }
                             }
+                        }
+                        if is_done {
+                            continue;
                         }
                     }
                 }
