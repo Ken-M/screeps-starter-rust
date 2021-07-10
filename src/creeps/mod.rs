@@ -345,7 +345,7 @@ pub fn creep_loop() {
                     num_repairer += 1;
                     role_string = String::from("repairer");
                 } else if (num_harvester_mineral <= 0)
-                    && (screeps::game::creeps::values().len() as i32 > 15)
+                    && (screeps::game::creeps::values().len() as i32 > 13)
                 {
                     creep.memory().set("role", "harvester_mineral");
                     num_harvester_mineral += 1;

@@ -1313,66 +1313,68 @@ pub fn find_nearest_active_source(
         }
     }
 
-    if *resource_kind == ResourceKind::ENERGY {
-        // active source.
-        let item_list = &creep
-            .room()
-            .expect("room is not visible to you")
-            .find(SOURCES_ACTIVE);
+    if find_item_list.len() <= 0 {
+        if *resource_kind == ResourceKind::ENERGY {
+            // active source.
+            let item_list = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(SOURCES_ACTIVE);
 
-        for chk_item in item_list.iter() {
-            let mut object: Position = creep.pos();
-            object.set_x(chk_item.pos().x());
-            object.set_y(chk_item.pos().y());
-            object.set_room_name(chk_item.room().unwrap().name());
-
-            find_item_list.push((object.clone(), 1));
-        }
-    } else if *resource_kind == ResourceKind::MINELALS {
-        // minerals.
-        let item_list = &creep
-            .room()
-            .expect("room is not visible to you")
-            .find(MINERALS);
-
-        for chk_item in item_list.iter() {
-            let mut object: Position = creep.pos();
-            object.set_x(chk_item.pos().x());
-            object.set_y(chk_item.pos().y());
-            object.set_room_name(chk_item.room().unwrap().name());
-
-            find_item_list.push((object.clone(), 1));
-        }
-    } else if *resource_kind == ResourceKind::COMMODITIES {
-        // comodities.
-        let item_list = &creep
-            .room()
-            .expect("room is not visible to you")
-            .find(DEPOSITS);
-
-        for chk_item in item_list.iter() {
-            let mut object: Position = creep.pos();
-            object.set_x(chk_item.pos().x());
-            object.set_y(chk_item.pos().y());
-            object.set_room_name(chk_item.room().unwrap().name());
-
-            find_item_list.push((object.clone(), 1));
-        }
-    } else {
-        // power.
-        let item_list = &creep
-            .room()
-            .expect("room is not visible to you")
-            .find(STRUCTURES);
-
-        for chk_item in item_list.iter() {
-            if chk_item.structure_type() == StructureType::PowerBank {
+            for chk_item in item_list.iter() {
                 let mut object: Position = creep.pos();
                 object.set_x(chk_item.pos().x());
                 object.set_y(chk_item.pos().y());
                 object.set_room_name(chk_item.room().unwrap().name());
 
                 find_item_list.push((object.clone(), 1));
+            }
+        } else if *resource_kind == ResourceKind::MINELALS {
+            // minerals.
+            let item_list = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(MINERALS);
+
+            for chk_item in item_list.iter() {
+                let mut object: Position = creep.pos();
+                object.set_x(chk_item.pos().x());
+                object.set_y(chk_item.pos().y());
+                object.set_room_name(chk_item.room().unwrap().name());
+
+                find_item_list.push((object.clone(), 1));
+            }
+        } else if *resource_kind == ResourceKind::COMMODITIES {
+            // comodities.
+            let item_list = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(DEPOSITS);
+
+            for chk_item in item_list.iter() {
+                let mut object: Position = creep.pos();
+                object.set_x(chk_item.pos().x());
+                object.set_y(chk_item.pos().y());
+                object.set_room_name(chk_item.room().unwrap().name());
+
+                find_item_list.push((object.clone(), 1));
+            }
+        } else {
+            // power.
+            let item_list = &creep
+                .room()
+                .expect("room is not visible to you")
+                .find(STRUCTURES);
+
+            for chk_item in item_list.iter() {
+                if chk_item.structure_type() == StructureType::PowerBank {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
+
+                    find_item_list.push((object.clone(), 1));
+                }
             }
         }
     }
@@ -1455,35 +1457,37 @@ pub fn find_nearest_stored_source(
         }
     }
 
-    let item_list = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(STRUCTURES);
+    if find_item_list.len() <= 0 {
+        let item_list = &creep
+            .room()
+            .expect("room is not visible to you")
+            .find(STRUCTURES);
 
-    for chk_item in item_list.iter() {
-        if chk_item.structure_type() == StructureType::Container
-            || chk_item.structure_type() == StructureType::Storage
-            || chk_item.structure_type() == StructureType::Lab
-            || (*resource_kind == ResourceKind::ENERGY
-                && chk_item.structure_type() == StructureType::Terminal)
-        {
-            if check_my_structure(chk_item)
-                || (chk_item.structure_type() == StructureType::Container)
+        for chk_item in item_list.iter() {
+            if chk_item.structure_type() == StructureType::Container
+                || chk_item.structure_type() == StructureType::Storage
+                || chk_item.structure_type() == StructureType::Lab
+                || (*resource_kind == ResourceKind::ENERGY
+                    && chk_item.structure_type() == StructureType::Terminal)
             {
-                for resource_type in resource_type_list.iter() {
-                    if check_stored(chk_item, resource_type) {
-                        let mut object: Position = creep.pos();
-                        object.set_x(chk_item.pos().x());
-                        object.set_y(chk_item.pos().y());
-                        object.set_room_name(chk_item.room().unwrap().name());
+                if check_my_structure(chk_item)
+                    || (chk_item.structure_type() == StructureType::Container)
+                {
+                    for resource_type in resource_type_list.iter() {
+                        if check_stored(chk_item, resource_type) {
+                            let mut object: Position = creep.pos();
+                            object.set_x(chk_item.pos().x());
+                            object.set_y(chk_item.pos().y());
+                            object.set_room_name(chk_item.room().unwrap().name());
 
-                        let mut dist = 1;
-                        if chk_item.structure_type() == StructureType::Container {
-                            dist = 0;
+                            let mut dist = 1;
+                            if chk_item.structure_type() == StructureType::Container {
+                                dist = 0;
+                            }
+
+                            find_item_list.push((object.clone(), dist));
+                            break;
                         }
-
-                        find_item_list.push((object.clone(), dist));
-                        break;
                     }
                 }
             }

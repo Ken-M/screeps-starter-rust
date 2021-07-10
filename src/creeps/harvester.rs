@@ -31,10 +31,50 @@ pub fn run_harvester(creep: &Creep) {
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
 
+    // extention .
     let structures = &creep
         .room()
         .expect("room is not visible to you")
         .find(STRUCTURES);
+
+    for structure in structures.iter() {
+        if structure.structure_type() != StructureType::Extension {
+            continue;
+        }
+
+        if check_transferable(structure, &ResourceType::Energy) {
+            match structure.as_transferable() {
+                Some(transf) => {
+                    let r = creep.transfer_all(transf, ResourceType::Energy);
+
+                    if r == ReturnCode::Ok {
+                        info!("transferd to my_structure!!");
+                        return;
+                    }
+                }
+
+                None => {
+                    // my_struct is not transferable.
+                }
+            }
+        }
+    }
+
+    let res = find_nearest_transferable_structure(
+        &creep,
+        &StructureType::Extension,
+        &ResourceType::Energy,
+    );
+    debug!("go to extention:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res);
+        if res == ReturnCode::Ok {
+            return;
+        }
+
+        info!("couldn't move to transfer: {:?}", res);
+    }
 
     for structure in structures.iter() {
         if is_harvested_from_storage == true
@@ -47,21 +87,22 @@ pub fn run_harvester(creep: &Creep) {
             continue;
         }
 
-        match structure.as_owned() {
-            Some(my_structure) => {
-                if my_structure.my() == false {
-                    continue;
-                }
-
+        if check_transferable(structure, &ResourceType::Energy) {
+            if structure.structure_type() == StructureType::Container {
                 match structure.as_transferable() {
-                    Some(transf) => {
+                    Some(_transf) => {
                         match structure.as_has_store() {
                             Some(has_store) => {
-                                if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0 {
-                                    let r = creep.transfer_all(transf, ResourceType::Energy);
+                                if structure.pos() == creep.pos() {
+                                    let trans_amount: u32 = min(
+                                        has_store.store_free_capacity(Some(ResourceType::Energy))
+                                            as u32,
+                                        creep.store_of(ResourceType::Energy),
+                                    );
+                                    let r = creep.drop(ResourceType::Energy, Some(trans_amount));
 
                                     if r == ReturnCode::Ok {
-                                        info!("transferd to my_structure!!");
+                                        info!("dropeed to container!!");
                                         return;
                                     }
                                 }
@@ -77,37 +118,14 @@ pub fn run_harvester(creep: &Creep) {
                         // my_struct is not transferable.
                     }
                 }
-            }
-
-            None => {
+            } else {
                 match structure.as_transferable() {
-                    Some(_transf) => {
-                        match structure.as_has_store() {
-                            Some(has_store) => {
-                                if has_store.store_free_capacity(Some(ResourceType::Energy)) > 0 {
-                                    if structure.structure_type() == StructureType::Container {
-                                        if structure.pos() == creep.pos() {
-                                            let trans_amount: u32 = min(
-                                                has_store
-                                                    .store_free_capacity(Some(ResourceType::Energy))
-                                                    as u32,
-                                                creep.store_of(ResourceType::Energy),
-                                            );
-                                            let r = creep
-                                                .drop(ResourceType::Energy, Some(trans_amount));
+                    Some(transf) => {
+                        let r = creep.transfer_all(transf, ResourceType::Energy);
 
-                                            if r == ReturnCode::Ok {
-                                                info!("dropeed to container!!");
-                                                return;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            None => {
-                                //no store.
-                            }
+                        if r == ReturnCode::Ok {
+                            info!("transferd to my_structure!!");
+                            return;
                         }
                     }
 
