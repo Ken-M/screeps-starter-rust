@@ -1056,9 +1056,11 @@ pub fn find_nearest_transfarable_item(
         }
 
         for resource_type in resource_type_list.iter() {
-            if check_transferable(chk_item, resource_type) {
-                find_item_list.push((chk_item.clone(), dist));
-                break;
+            if creep.store_of(*resource_type) > 0 as u32 {
+                if check_transferable(chk_item, resource_type) {
+                    find_item_list.push((chk_item.clone(), dist));
+                    break;
+                }
             }
         }
     }

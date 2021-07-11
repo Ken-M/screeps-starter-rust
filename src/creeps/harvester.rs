@@ -327,14 +327,14 @@ pub fn run_harvester_mineral(creep: &Creep) {
     let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 
     for structure in structures.iter() {
-        //if is_harvested_from_storage == true
-        //    && (structure.structure_type() == StructureType::Container
-        //        || structure.structure_type() == StructureType::Storage)
-        //{
-        //前回storage系からresourceを調達している場合はもどさないようにする.
-        //
-        //            continue;
-        //       }
+        if is_harvested_from_storage == true
+            && (structure.structure_type() == StructureType::Container
+                || structure.structure_type() == StructureType::Storage)
+        {
+            //前回storage系からresourceを調達している場合はもどさないようにする.
+
+            continue;
+        }
 
         for resource_type in resrouce_type_list.iter() {
             if &creep.store_of(*resource_type) > &(0 as u32) {
@@ -402,6 +402,4 @@ pub fn run_harvester_mineral(creep: &Creep) {
 
         return;
     }
-
-    run_builder(creep);
 }

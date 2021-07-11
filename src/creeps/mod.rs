@@ -51,22 +51,24 @@ fn reset_source_target(
         }
 
         // storageをチェック.
-        let res = find_nearest_stored_source(&creep, harvest_kind, true);
+        if *harvest_kind == ResourceKind::ENERGY {
+            let res = find_nearest_stored_source(&creep, harvest_kind, true);
 
-        if res.load_local_path().len() > 0 {
-            let last_pos = *(res.load_local_path().last().unwrap());
-            let json_str = serde_json::to_string(&last_pos).unwrap();
-            creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", 10);
-            creep.memory().set("will_harvest_from_storage", true);
+            if res.load_local_path().len() > 0 {
+                let last_pos = *(res.load_local_path().last().unwrap());
+                let json_str = serde_json::to_string(&last_pos).unwrap();
+                creep.memory().set("target_pos", json_str);
+                creep.memory().set("target_pos_count", 10);
+                creep.memory().set("will_harvest_from_storage", true);
 
-            debug!(
-                "harvesting : target_pos:{:?}",
-                creep.memory().string("target_pos")
-            );
+                debug!(
+                    "harvesting : target_pos:{:?}",
+                    creep.memory().string("target_pos")
+                );
 
-            let ret_position = res.load_local_path().last().unwrap().clone();
-            return (res, ret_position);
+                let ret_position = res.load_local_path().last().unwrap().clone();
+                return (res, ret_position);
+            }
         }
     } else {
         // storageをチェック.
