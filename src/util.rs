@@ -5,9 +5,10 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties, RoomPosition,
-    Source, Structure, StructureProperties,
+    look::*, pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
+    RoomPosition, Source, Structure, StructureProperties,
 };
+
 use std::cmp::*;
 use std::{collections::HashMap, u32, u8};
 
@@ -93,7 +94,7 @@ pub fn calc_average(room_name: &RoomName) {
 
     match room {
         Some(room_obj) => {
-            let structures = room_obj.find(STRUCTURES);
+            let structures = room_obj.find(find::STRUCTURES);
             let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES);
 
             let mut total_repair_hp: u128 = 0;
@@ -384,7 +385,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
     if is_cache_used == false {
         match room {
             Some(room_obj) => {
-                let structures = room_obj.find(STRUCTURES);
+                let structures = room_obj.find(find::STRUCTURES);
 
                 // 地形データを反映.
                 for x_pos in 0..ROOM_SIZE_X {
@@ -426,7 +427,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                 }
 
                 // 自分のものかどうかを問わず、creepのいるマスも通行不可として扱う.
-                let creeps = room_obj.find(CREEPS);
+                let creeps = room_obj.find(find::CREEPS);
                 // Avoid creeps in the room
                 for creep in creeps {
                     cost_matrix.set(creep.pos().x() as u8, creep.pos().y() as u8, 0xff);
@@ -1028,7 +1029,7 @@ pub fn find_nearest_transfarable_item(
     let item_list = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES);
 
     let mut find_item_list = Vec::<(Structure, u32)>::new();
     let resource_type_list = make_resoucetype_list(resource_kind);
@@ -1043,6 +1044,7 @@ pub fn find_nearest_transfarable_item(
         if *is_except_storages == true
             && (chk_item.structure_type() == StructureType::Container
                 || chk_item.structure_type() == StructureType::Storage
+                || chk_item.structure_type() == StructureType::Link
                 || (*resource_kind == ResourceKind::ENERGY
                     && chk_item.structure_type() == StructureType::Terminal))
         {
@@ -1079,7 +1081,7 @@ pub fn find_nearest_repairable_item_onlywall_repair_hp(
     let item_list = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES);
 
     let mut find_item_list = Vec::<(Structure, u32)>::new();
 
@@ -1113,7 +1115,7 @@ pub fn find_nearest_repairable_item_onlywall_hp(
     let item_list = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES);
 
     let mut find_item_list = Vec::<(Structure, u32)>::new();
 
@@ -1140,7 +1142,7 @@ pub fn find_nearest_repairable_item_except_wall_hp(
     let item_list = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES);
 
     let mut find_item_list = Vec::<(Structure, u32)>::new();
 
@@ -1168,7 +1170,7 @@ pub fn find_nearest_repairable_item_except_wall_dying(
     let item_list = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES);
 
     let mut find_item_list = Vec::<(Structure, u32)>::new();
 
@@ -1198,7 +1200,7 @@ pub fn find_nearest_transferable_structure(
     let item_list = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES);
 
     let mut find_item_list = Vec::<(Structure, u32)>::new();
 
@@ -1276,7 +1278,7 @@ pub fn find_nearest_active_source(
         let item_list = &creep
             .room()
             .expect("room is not visible to you")
-            .find(TOMBSTONES);
+            .find(find::TOMBSTONES);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
@@ -1296,7 +1298,7 @@ pub fn find_nearest_active_source(
         let item_list = &creep
             .room()
             .expect("room is not visible to you")
-            .find(RUINS);
+            .find(find::RUINS);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
@@ -1334,22 +1336,42 @@ pub fn find_nearest_active_source(
             let item_list = &creep
                 .room()
                 .expect("room is not visible to you")
-                .find(MINERALS);
+                .find(find::MINERALS);
 
             for chk_item in item_list.iter() {
                 let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
 
-                find_item_list.push((object.clone(), 1));
+                let look_result = creep.room().expect("I can't see").look_for_at_xy(
+                    look::STRUCTURES,
+                    creep.pos().x(),
+                    creep.pos().y(),
+                );
+
+                let mut is_extractor_equited = false;
+
+                for one_result in look_result {
+                    if one_result.structure_type() == StructureType::Extractor
+                        && check_my_structure(&one_result)
+                    {
+                        is_extractor_equited = true;
+                        break;
+                    }
+                }
+
+                if is_extractor_equited {
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
+
+                    find_item_list.push((object.clone(), 1));
+                }
             }
         } else if *resource_kind == ResourceKind::COMMODITIES {
             // comodities.
             let item_list = &creep
                 .room()
                 .expect("room is not visible to you")
-                .find(DEPOSITS);
+                .find(find::DEPOSITS);
 
             for chk_item in item_list.iter() {
                 let mut object: Position = creep.pos();
@@ -1364,7 +1386,7 @@ pub fn find_nearest_active_source(
             let item_list = &creep
                 .room()
                 .expect("room is not visible to you")
-                .find(STRUCTURES);
+                .find(find::STRUCTURES);
 
             for chk_item in item_list.iter() {
                 if chk_item.structure_type() == StructureType::PowerBank {
@@ -1420,7 +1442,7 @@ pub fn find_nearest_stored_source(
         let item_list = &creep
             .room()
             .expect("room is not visible to you")
-            .find(TOMBSTONES);
+            .find(find::TOMBSTONES);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
@@ -1440,7 +1462,7 @@ pub fn find_nearest_stored_source(
         let item_list = &creep
             .room()
             .expect("room is not visible to you")
-            .find(RUINS);
+            .find(find::RUINS);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
@@ -1461,11 +1483,12 @@ pub fn find_nearest_stored_source(
         let item_list = &creep
             .room()
             .expect("room is not visible to you")
-            .find(STRUCTURES);
+            .find(find::STRUCTURES);
 
         for chk_item in item_list.iter() {
             if chk_item.structure_type() == StructureType::Container
                 || chk_item.structure_type() == StructureType::Storage
+                || chk_item.structure_type() == StructureType::Link
                 || chk_item.structure_type() == StructureType::Lab
                 || (*resource_kind == ResourceKind::ENERGY
                     && chk_item.structure_type() == StructureType::Terminal)
@@ -1533,11 +1556,31 @@ pub fn find_nearest_source(
 
             for chk_item in item_list.iter() {
                 let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
 
-                find_item_list.push((object.clone(), 1));
+                let look_result = creep.room().expect("I can't see").look_for_at_xy(
+                    look::STRUCTURES,
+                    creep.pos().x(),
+                    creep.pos().y(),
+                );
+
+                let mut is_extractor_equited = false;
+
+                for one_result in look_result {
+                    if one_result.structure_type() == StructureType::Extractor
+                        && check_my_structure(&one_result)
+                    {
+                        is_extractor_equited = true;
+                        break;
+                    }
+                }
+
+                if is_extractor_equited {
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
+
+                    find_item_list.push((object.clone(), 1));
+                }
             }
         }
 

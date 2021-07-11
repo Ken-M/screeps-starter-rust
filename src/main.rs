@@ -9,6 +9,7 @@ use stdweb::js;
 mod create;
 mod creeps;
 mod defence;
+mod manage;
 mod util;
 
 mod logging;
@@ -46,6 +47,9 @@ fn game_loop() {
     );
 
     util::clear_init_flag();
+
+    info!("running links cpu:{}", screeps::game::cpu::get_used());
+    manage::link::run_link();
 
     info!("running spawns cpu:{}", screeps::game::cpu::get_used());
     create::spawn::do_spawn();

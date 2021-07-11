@@ -132,6 +132,7 @@ fn reset_source_target(
     }
 
     //全部ダメならとりあえずその場待機.
+    &creep.memory().set("nothing_to_harvest", true);
     let res = find_path(&creep, &creep.pos(), 0);
     return (res, creep.pos().clone());
 }
@@ -395,16 +396,19 @@ pub fn creep_loop() {
         }
 
         if creep.memory().bool("harvesting") {
-            if creep.store_free_capacity(None) == 0 {
+            if (creep.store_free_capacity(None) == 0) || (creep.memory().bool("nothing_to_harvest"))
+            {
                 creep.memory().set("harvesting", false);
                 creep.memory().del("target_pos");
                 creep.memory().del("will_harvest_from_storage");
+                creep.memory().del("nothing_to_harvest");
             }
         } else {
             if creep.store_used_capacity(None) == 0 {
                 creep.memory().set("harvesting", true);
                 creep.memory().del("target_pos");
                 creep.memory().del("harvested_from_storage");
+                creep.memory().del("nothing_to_harvest");
             }
         }
 
@@ -652,6 +656,17 @@ pub fn creep_loop() {
                                             is_harvested = true;
                                             break;
                                         }
+                                    }
+
+                                    Structure::Link(link) => {
+                                        let r = creep.withdraw_all(link, resource_type);
+                                        if r != ReturnCode::Ok {
+                                            warn!("couldn't withdraw from storage: {:?}", r);
+                                            continue;
+                                        }
+                                        creep.memory().set("harvested_from_storage", true);
+                                        is_harvested = true;
+                                        break;
                                     }
 
                                     _ => {
