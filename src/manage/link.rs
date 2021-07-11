@@ -1,6 +1,6 @@
 use crate::util::*;
 use log::*;
-use screeps::constants::find::*;
+
 use screeps::Structure;
 use screeps::{
     find, game, local::ObjectId, objects::StructureLink, pathfinder::SearchResults, prelude::*,

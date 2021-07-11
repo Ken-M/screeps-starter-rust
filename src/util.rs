@@ -5,7 +5,7 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    look::*, pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
+    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
     RoomPosition, Source, Structure, StructureProperties,
 };
 

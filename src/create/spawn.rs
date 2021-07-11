@@ -24,11 +24,11 @@ pub fn do_spawn() {
         .i32("num_builder")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_harvester: i32 = screeps::memory::root()
+    let _num_harvester: i32 = screeps::memory::root()
         .i32("num_harvester")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let num_harvester_spawn: i32 = screeps::memory::root()
+    let _num_harvester_spawn: i32 = screeps::memory::root()
         .i32("num_harvester_spawn")
         .unwrap_or(Some(0))
         .unwrap_or(0);
