@@ -315,7 +315,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
 
 pub fn run_harvester_mineral(creep: &Creep) {
     let _name = creep.name();
-    info!("running harvester mineral{}", creep.name());
+    info!("running harvester mineral {}", creep.name());
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
 
@@ -323,6 +323,8 @@ pub fn run_harvester_mineral(creep: &Creep) {
         .room()
         .expect("room is not visible to you")
         .find(STRUCTURES);
+
+    let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 
     for structure in structures.iter() {
         //if is_harvested_from_storage == true
@@ -334,86 +336,56 @@ pub fn run_harvester_mineral(creep: &Creep) {
         //            continue;
         //       }
 
-        match structure.as_owned() {
-            Some(my_structure) => {
-                if my_structure.my() == false {
-                    continue;
-                }
-                if my_structure.structure_type() == StructureType::Container {
-                    match structure.as_transferable() {
-                        Some(_transf) => {
-                            match structure.as_has_store() {
-                                Some(has_store) => {
-                                    if my_structure.pos() == creep.pos() {
-                                        let resrouce_type_list =
-                                            make_resoucetype_list(&ResourceKind::MINELALS);
-                                        for resource_type in resrouce_type_list {
-                                            if has_store.store_free_capacity(Some(resource_type))
-                                                > 0
-                                            {
-                                                let trans_amount: u32 = min(
-                                                    has_store
-                                                        .store_free_capacity(Some(resource_type))
-                                                        as u32,
-                                                    creep.store_of(resource_type),
-                                                );
-                                                let r =
-                                                    creep.drop(resource_type, Some(trans_amount));
-
-                                                if r == ReturnCode::Ok {
-                                                    info!("dropeed to container!!");
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                None => {
-                                    //no store.
-                                }
-                            }
-                        }
-
-                        None => {
-                            // my_struct is not transferable.
-                        }
-                    }
-                } else {
-                    match structure.as_transferable() {
-                        Some(transf) => {
-                            match structure.as_has_store() {
-                                Some(has_store) => {
-                                    let resrouce_type_list =
-                                        make_resoucetype_list(&ResourceKind::MINELALS);
-
-                                    for resource_type in resrouce_type_list {
-                                        if has_store.store_free_capacity(Some(resource_type)) > 0 {
-                                            let r = creep.transfer_all(transf, resource_type);
+        for resource_type in resrouce_type_list.iter() {
+            if &creep.store_of(*resource_type) > &(0 as u32) {
+                if check_transferable(structure, &resource_type) {
+                    if structure.structure_type() == StructureType::Container {
+                        match structure.as_transferable() {
+                            Some(_transf) => {
+                                match structure.as_has_store() {
+                                    Some(has_store) => {
+                                        if structure.pos() == creep.pos() {
+                                            let trans_amount: u32 = min(
+                                                has_store.store_free_capacity(Some(*resource_type))
+                                                    as u32,
+                                                creep.store_of(*resource_type),
+                                            );
+                                            let r = creep.drop(*resource_type, Some(trans_amount));
 
                                             if r == ReturnCode::Ok {
-                                                info!("transferd to my_structure!!");
+                                                info!("dropeed to container!!");
                                                 return;
                                             }
                                         }
                                     }
-                                }
 
-                                None => {
-                                    //no store.
+                                    None => {
+                                        //no store.
+                                    }
                                 }
                             }
-                        }
 
-                        None => {
-                            // my_struct is not transferable.
+                            None => {
+                                // my_struct is not transferable.
+                            }
+                        }
+                    } else {
+                        match structure.as_transferable() {
+                            Some(transf) => {
+                                let r = creep.transfer_all(transf, *resource_type);
+
+                                if r == ReturnCode::Ok {
+                                    info!("transferd to my_structure!!");
+                                    return;
+                                }
+                            }
+
+                            None => {
+                                // my_struct is not transferable.
+                            }
                         }
                     }
                 }
-            }
-
-            None => {
-                //not mine.
             }
         }
     }

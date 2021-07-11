@@ -5,8 +5,8 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
-    RoomPosition, Source, Structure, StructureProperties,
+    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties, RoomPosition,
+    Source, Structure, StructureProperties,
 };
 
 use std::cmp::*;
@@ -897,11 +897,10 @@ pub fn check_stored(structure: &screeps::objects::Structure, resource_type: &Res
 }
 
 pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> {
-    let mut resource_type_list = Vec::<ResourceType>::new();
-
     match resource_kind {
         ResourceKind::ENERGY => {
-            resource_type_list.push(ResourceType::Energy);
+            let templist = vec![ResourceType::Energy];
+            return templist;
         }
 
         ResourceKind::MINELALS => {
@@ -949,7 +948,7 @@ pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> 
                 ResourceType::CatalyzedGhodiumAlkalide,
             ];
 
-            resource_type_list.extend(templist);
+            return templist;
         }
 
         ResourceKind::COMMODITIES => {
@@ -995,16 +994,14 @@ pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> 
                 ResourceType::Emanation,
                 ResourceType::Essence,
             ];
-            resource_type_list.extend(templist);
+            return templist;
         }
 
         ResourceKind::POWER => {
-            resource_type_list.push(ResourceType::Power);
-            resource_type_list.push(ResourceType::Ops);
+            let templist = vec![ResourceType::Power, ResourceType::Ops];
+            return templist;
         }
     }
-
-    return resource_type_list;
 }
 
 pub fn check_resouce_type_kind_matching(

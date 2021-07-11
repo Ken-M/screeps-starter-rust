@@ -492,6 +492,7 @@ pub fn creep_loop() {
             }
 
             let mut is_harvested = false;
+            let resource_type_list = make_resoucetype_list(&harvest_kind);
 
             // check dropped source.
             let resources = &creep
@@ -522,13 +523,12 @@ pub fn creep_loop() {
 
                 for ruin in ruins.iter() {
                     if creep.pos().is_near_to(ruin) {
-                        let resource_type_list = make_resoucetype_list(&harvest_kind);
-                        for resource_type in resource_type_list {
-                            if ruin.store_of(resource_type) > 0 {
-                                let r = creep.withdraw_all(ruin, resource_type);
+                        for resource_type in resource_type_list.iter() {
+                            if ruin.store_of(*resource_type) > 0 {
+                                let r = creep.withdraw_all(ruin, *resource_type);
                                 if r != ReturnCode::Ok {
                                     warn!("couldn't withdraw from RUINs: {:?}", r);
-                                    continue;
+                                    break;
                                 }
                                 is_harvested = true;
                                 break;
@@ -551,13 +551,12 @@ pub fn creep_loop() {
 
                 for tombstone in tombstones.iter() {
                     if creep.pos().is_near_to(tombstone) {
-                        let resource_type_list = make_resoucetype_list(&harvest_kind);
-                        for resource_type in resource_type_list {
-                            if tombstone.store_of(resource_type) > 0 {
-                                let r = creep.withdraw_all(tombstone, resource_type);
+                        for resource_type in resource_type_list.iter() {
+                            if tombstone.store_of(*resource_type) > 0 {
+                                let r = creep.withdraw_all(tombstone, *resource_type);
                                 if r != ReturnCode::Ok {
                                     warn!("couldn't withdraw from TOMBSTONES: {:?}", r);
-                                    continue;
+                                    break;
                                 }
                                 is_harvested = true;
                                 break;
@@ -619,15 +618,14 @@ pub fn creep_loop() {
 
                 for structure in structures.iter() {
                     if creep.pos().is_near_to(structure) {
-                        let resource_type_list = make_resoucetype_list(&harvest_kind);
-                        for resource_type in resource_type_list {
+                        for resource_type in resource_type_list.iter() {
                             if check_stored(structure, &resource_type) {
                                 match structure {
                                     Structure::Container(container) => {
-                                        let r = creep.withdraw_all(container, resource_type);
+                                        let r = creep.withdraw_all(container, *resource_type);
                                         if r != ReturnCode::Ok {
                                             warn!("couldn't withdraw from container: {:?}", r);
-                                            continue;
+                                            break;
                                         }
                                         creep.memory().set("harvested_from_storage", true);
                                         is_harvested = true;
@@ -635,10 +633,10 @@ pub fn creep_loop() {
                                     }
 
                                     Structure::Storage(storage) => {
-                                        let r = creep.withdraw_all(storage, resource_type);
+                                        let r = creep.withdraw_all(storage, *resource_type);
                                         if r != ReturnCode::Ok {
                                             warn!("couldn't withdraw from storage: {:?}", r);
-                                            continue;
+                                            break;
                                         }
                                         creep.memory().set("harvested_from_storage", true);
                                         is_harvested = true;
@@ -647,10 +645,10 @@ pub fn creep_loop() {
 
                                     Structure::Terminal(terminal) => {
                                         if harvest_kind == ResourceKind::ENERGY {
-                                            let r = creep.withdraw_all(terminal, resource_type);
+                                            let r = creep.withdraw_all(terminal, *resource_type);
                                             if r != ReturnCode::Ok {
                                                 warn!("couldn't withdraw from terminal: {:?}", r);
-                                                continue;
+                                                break;
                                             }
                                             creep.memory().set("harvested_from_storage", true);
                                             is_harvested = true;
@@ -659,10 +657,10 @@ pub fn creep_loop() {
                                     }
 
                                     Structure::Link(link) => {
-                                        let r = creep.withdraw_all(link, resource_type);
+                                        let r = creep.withdraw_all(link, *resource_type);
                                         if r != ReturnCode::Ok {
                                             warn!("couldn't withdraw from storage: {:?}", r);
-                                            continue;
+                                            break;
                                         }
                                         creep.memory().set("harvested_from_storage", true);
                                         is_harvested = true;
