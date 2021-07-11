@@ -330,12 +330,12 @@ pub fn creep_loop() {
 
         match role_string.as_str() {
             "none" => {
-                if num_harvester_spawn == 0 {
+                if num_harvester_spawn < 3 {
                     creep.memory().set("role", "harvester_spawn");
                     num_harvester_spawn += 1;
                     role_string = String::from("harvester_spawn");
                     cap_worker_carry += creep.store_capacity(None) as u128;
-                } else if num_upgrader < (screeps::game::creeps::values().len() as i32 / 6) + 1 {
+                } else if num_upgrader < (screeps::game::creeps::values().len() as i32 / 10) + 1 {
                     creep.memory().set("role", "upgrader");
                     num_upgrader += 1;
                     role_string = String::from("upgrader");

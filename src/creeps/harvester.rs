@@ -31,7 +31,7 @@ pub fn run_harvester(creep: &Creep) {
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
 
-    // extention .
+    // not far extention .
     let structures = &creep
         .room()
         .expect("room is not visible to you")
@@ -64,6 +64,7 @@ pub fn run_harvester(creep: &Creep) {
         &creep,
         &StructureType::Extension,
         &ResourceType::Energy,
+        Some(20 as f64),
     );
     debug!("go to extention:{:?}", res.load_local_path());
 
@@ -76,6 +77,7 @@ pub fn run_harvester(creep: &Creep) {
         info!("couldn't move to transfer: {:?}", res);
     }
 
+    // others.
     for structure in structures.iter() {
         if is_harvested_from_storage == true
             && (structure.structure_type() == StructureType::Container
@@ -174,8 +176,12 @@ pub fn run_harvester_spawn(creep: &Creep) {
         }
     }
 
-    let res =
-        find_nearest_transferable_structure(&creep, &StructureType::Spawn, &ResourceType::Energy);
+    let res = find_nearest_transferable_structure(
+        &creep,
+        &StructureType::Spawn,
+        &ResourceType::Energy,
+        None,
+    );
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -238,6 +244,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
         &creep,
         &StructureType::Extension,
         &ResourceType::Energy,
+        None,
     );
     debug!("go to:{:?}", res.load_local_path());
 
@@ -298,8 +305,12 @@ pub fn run_harvester_spawn(creep: &Creep) {
         }
     }
 
-    let res =
-        find_nearest_transferable_structure(&creep, &StructureType::Tower, &ResourceType::Energy);
+    let res = find_nearest_transferable_structure(
+        &creep,
+        &StructureType::Tower,
+        &ResourceType::Energy,
+        None,
+    );
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -316,6 +327,11 @@ pub fn run_harvester_spawn(creep: &Creep) {
 pub fn run_harvester_mineral(creep: &Creep) {
     let _name = creep.name();
     info!("running harvester mineral {}", creep.name());
+
+    if creep.store_used_capacity(None) <= 0 {
+        // nothing to do.
+        return;
+    }
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
 

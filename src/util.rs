@@ -1195,6 +1195,7 @@ pub fn find_nearest_transferable_structure(
     creep: &screeps::objects::Creep,
     structure_type: &StructureType,
     resource_type: &ResourceType,
+    max_cost: Option<f64>,
 ) -> screeps::pathfinder::SearchResults {
     let item_list = &creep
         .room()
@@ -1214,7 +1215,8 @@ pub fn find_nearest_transferable_structure(
     let option = SearchOptions::new()
         .room_callback(calc_room_cost)
         .plain_cost(2)
-        .swamp_cost(10);
+        .swamp_cost(10)
+        .max_cost(max_cost.unwrap_or(f64::INFINITY));
 
     return search_many(creep, find_item_list, option);
 }
