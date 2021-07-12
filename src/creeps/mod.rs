@@ -410,6 +410,8 @@ pub fn creep_loop() {
                 creep.memory().set("harvesting", true);
                 creep.memory().del("target_pos");
                 creep.memory().del("harvested_from_storage");
+                creep.memory().del("harvested_from_terminal");
+                creep.memory().del("harvested_from_link");
                 creep.memory().del("nothing_to_harvest");
             }
         }
@@ -652,7 +654,7 @@ pub fn creep_loop() {
                                                 warn!("couldn't withdraw from terminal: {:?}", r);
                                                 break;
                                             }
-                                            creep.memory().set("harvested_from_storage", true);
+                                            creep.memory().set("harvested_from_terminal", true);
                                             is_harvested = true;
                                             break;
                                         }
@@ -661,10 +663,10 @@ pub fn creep_loop() {
                                     Structure::Link(link) => {
                                         let r = creep.withdraw_all(link, *resource_type);
                                         if r != ReturnCode::Ok {
-                                            warn!("couldn't withdraw from storage: {:?}", r);
+                                            warn!("couldn't withdraw from link: {:?}", r);
                                             break;
                                         }
-                                        creep.memory().set("harvested_from_storage", true);
+                                        creep.memory().set("harvested_from_link", true);
                                         is_harvested = true;
                                         break;
                                     }

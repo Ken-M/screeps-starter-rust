@@ -45,6 +45,7 @@ pub fn run_link() {
         }
     }
 
+    info!("Link: Max:{:?}, Min:{:?}", max_link, min_link);
     if min_link == None || max_link == None || min_link == max_link {
         return;
     }
@@ -56,6 +57,12 @@ pub fn run_link() {
         - min_link_structure.store_of(ResourceType::Energy);
 
     if diff >= 300 {
-        max_link_structure.transfer_energy(&min_link_structure, Some(diff / 2));
+        if max_link_structure.cooldown() <= 0 {
+            let r = max_link_structure.transfer_energy(&min_link_structure, Some(diff / 2));
+
+            if r != ReturnCode::Ok {
+                warn!("couldn't transfer to another link:{:?}", r);
+            }
+        }
     }
 }

@@ -30,6 +30,8 @@ pub fn run_harvester(creep: &Creep) {
     }
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
+    let is_harvested_from_terminal = creep.memory().bool("harvested_from_terminal");
+    let is_harvested_from_link = creep.memory().bool("harvested_from_link");
 
     // not far extention .
     let structures = &creep
@@ -81,11 +83,20 @@ pub fn run_harvester(creep: &Creep) {
     for structure in structures.iter() {
         if is_harvested_from_storage == true
             && (structure.structure_type() == StructureType::Container
-                || structure.structure_type() == StructureType::Storage
-                || structure.structure_type() == StructureType::Terminal)
+                || structure.structure_type() == StructureType::Storage)
         {
             //前回storage系からresourceを調達している場合はもどさないようにする.
 
+            continue;
+        }
+
+        if is_harvested_from_terminal == true
+            && (structure.structure_type() == StructureType::Terminal)
+        {
+            continue;
+        }
+
+        if is_harvested_from_link == true && (structure.structure_type() == StructureType::Link) {
             continue;
         }
 
@@ -139,8 +150,13 @@ pub fn run_harvester(creep: &Creep) {
         }
     }
 
-    let res =
-        find_nearest_transfarable_item(&creep, &ResourceKind::ENERGY, &is_harvested_from_storage);
+    let res = find_nearest_transfarable_item(
+        &creep,
+        &ResourceKind::ENERGY,
+        &is_harvested_from_storage,
+        &is_harvested_from_terminal,
+        &is_harvested_from_link,
+    );
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
@@ -334,6 +350,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
     }
 
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
+    let is_harvested_from_terminal = creep.memory().bool("harvested_from_terminal");
 
     let structures = &creep
         .room()
@@ -348,6 +365,14 @@ pub fn run_harvester_mineral(creep: &Creep) {
                 || structure.structure_type() == StructureType::Storage)
         {
             //前回storage系からresourceを調達している場合はもどさないようにする.
+
+            continue;
+        }
+
+        if is_harvested_from_terminal == true
+            && (structure.structure_type() == StructureType::Terminal)
+        {
+            //前回Terminalからresourceを調達している場合はもどさないようにする.
 
             continue;
         }
@@ -406,8 +431,13 @@ pub fn run_harvester_mineral(creep: &Creep) {
         }
     }
 
-    let res =
-        find_nearest_transfarable_item(&creep, &ResourceKind::MINELALS, &is_harvested_from_storage);
+    let res = find_nearest_transfarable_item(
+        &creep,
+        &ResourceKind::MINELALS,
+        &is_harvested_from_storage,
+        &is_harvested_from_terminal,
+        &false,
+    );
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {

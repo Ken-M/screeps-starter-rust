@@ -1003,6 +1003,8 @@ pub fn find_nearest_transfarable_item(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
     is_except_storages: &bool,
+    is_except_terminal: &bool,
+    is_except_link: &bool,
 ) -> screeps::pathfinder::SearchResults {
     let item_list = &creep
         .room()
@@ -1021,12 +1023,24 @@ pub fn find_nearest_transfarable_item(
 
         if *is_except_storages == true
             && (chk_item.structure_type() == StructureType::Container
-                || chk_item.structure_type() == StructureType::Storage
-                || chk_item.structure_type() == StructureType::Link
-                || (*resource_kind == ResourceKind::ENERGY
-                    && chk_item.structure_type() == StructureType::Terminal))
+                || chk_item.structure_type() == StructureType::Storage)
         {
             //前回storage系からresourceを調達している場合はもどさないようにする.
+
+            continue;
+        }
+
+        if *is_except_terminal == true
+            && (*resource_kind == ResourceKind::ENERGY
+                && chk_item.structure_type() == StructureType::Terminal)
+        {
+            //前回Terminalからresourceを調達している場合はもどさないようにする.
+
+            continue;
+        }
+
+        if *is_except_link == true && (chk_item.structure_type() == StructureType::Link) {
+            //前回Linkからresourceを調達している場合はもどさないようにする.
 
             continue;
         }
