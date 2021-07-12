@@ -387,25 +387,6 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
             Some(room_obj) => {
                 let structures = room_obj.find(find::STRUCTURES);
 
-                // 地形データを反映.
-                for x_pos in 0..ROOM_SIZE_X {
-                    for y_pos in 0..ROOM_SIZE_Y {
-                        let this_terrain = room_obj.get_terrain().get(x_pos as u32, y_pos as u32);
-
-                        match this_terrain {
-                            Terrain::Plain => {
-                                cost_matrix.set(x_pos, y_pos, 2);
-                            }
-                            Terrain::Swamp => {
-                                cost_matrix.set(x_pos, y_pos, 10);
-                            }
-                            Terrain::Wall => {
-                                cost_matrix.set(x_pos, y_pos, 0xff);
-                            }
-                        }
-                    }
-                }
-
                 for chk_struct in structures {
                     // Roadのコストをさげる.
                     if chk_struct.structure_type() == StructureType::Road {
@@ -467,8 +448,14 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                             let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8);
                             // すでに通行不可としてマークされているマスは触らない.
                             if cur_cost < 0xff {
-                                let new_cost = cur_cost + 15;
-                                cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost);
+                                if room_obj
+                                    .get_terrain()
+                                    .get(new_x_pos as u32, new_y_pos as u32)
+                                    != Terrain::Wall
+                                {
+                                    let new_cost = 11;
+                                    cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost);
+                                }
                             }
                         }
                     }
@@ -476,13 +463,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
             }
 
             None => {
-                // 地形データだけを反映.
-                info!("Room:{}, blocked.", room_name);
-                for x_pos in 0..ROOM_SIZE_X {
-                    for y_pos in 0..ROOM_SIZE_Y {
-                        cost_matrix.set(x_pos, y_pos, 0xff);
-                    }
-                }
+                //デフォルトのまま.
             }
         }
 

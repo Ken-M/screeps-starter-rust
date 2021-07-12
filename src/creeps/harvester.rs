@@ -68,7 +68,7 @@ pub fn run_harvester(creep: &Creep) {
     );
     debug!("go to extention:{:?}", res.load_local_path());
 
-    if res.load_local_path().len() > 0 {
+    if res.incomplete == false {
         let res = creep.move_by_path_search_result(&res);
         if res == ReturnCode::Ok {
             return;
