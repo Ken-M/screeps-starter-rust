@@ -20,7 +20,7 @@ pub fn run_upgrader(creep: &Creep) {
         let r = creep.upgrade_controller(&c);
 
         if r == ReturnCode::NotInRange {
-            let res = find_path(&creep, &c.pos(), 1);
+            let res = find_path(&creep, &c.pos(), 3);
 
             if res.load_local_path().len() > 0 {
                 let res = creep.move_by_path_search_result(&res);
@@ -32,6 +32,16 @@ pub fn run_upgrader(creep: &Creep) {
             warn!("couldn't upgrade: {:?}", r);
         }
     } else {
-        warn!("creep room has no controller!");
+        let res = find_nearest_room_controler(&creep);
+        debug!("go to:{:?}", res.load_local_path());
+
+        if res.load_local_path().len() > 0 {
+            let res = creep.move_by_path_search_result(&res);
+            if res != ReturnCode::Ok {
+                info!("couldn't move to build: {:?}", res);
+            }
+
+            return;
+        }
     }
 }
