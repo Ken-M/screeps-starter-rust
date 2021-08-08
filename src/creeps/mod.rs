@@ -115,7 +115,7 @@ fn reset_source_target(
     }
 
     //　やむなく枯渇sourceを選ぶ.
-    let res = find_nearest_source(&creep, harvest_kind);
+    let res = find_nearest_exhausted_source(&creep, harvest_kind);
 
     if res.load_local_path().len() > 0 {
         let last_pos = *(res.load_local_path().last().unwrap());

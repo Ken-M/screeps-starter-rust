@@ -1278,7 +1278,7 @@ pub fn find_nearest_repairable_item_except_wall_dying(
     for chk_item in item_list {
         if chk_item.structure_type() != StructureType::Wall {
             if check_repairable(chk_item) {
-                if get_live_tickcount(chk_item).unwrap_or(10000) as u128 <= 1000 {
+                if get_live_tickcount(chk_item).unwrap_or(10000) as u128 <= 3000 {
                     find_item_list.push((chk_item.clone(), 3));
                 }
             }
@@ -1575,12 +1575,11 @@ pub fn find_nearest_active_source(
             }
 
             for chk_item in item_list.iter() {
-                let mut object: Position = creep.pos();
 
                 let look_result = creep.room().expect("I can't see").look_for_at_xy(
                     look::STRUCTURES,
-                    creep.pos().x(),
-                    creep.pos().y(),
+                    chk_item.pos().x(),
+                    chk_item.pos().y(),
                 );
 
                 let mut is_extractor_equited = false;
@@ -1595,6 +1594,8 @@ pub fn find_nearest_active_source(
                 }
 
                 if is_extractor_equited {
+                    let mut object: Position = creep.pos();
+
                     object.set_x(chk_item.pos().x());
                     object.set_y(chk_item.pos().y());
                     object.set_room_name(chk_item.room().unwrap().name());
@@ -1692,6 +1693,7 @@ pub fn find_nearest_stored_source(
     let resource_type_list = make_resoucetype_list(&resource_kind);
 
     if is_2nd_check == false {
+
         // dropped resource.
         let item_list = &mut creep
             .room()
@@ -1839,9 +1841,7 @@ pub fn find_nearest_stored_source(
             if chk_item.structure_type() == StructureType::Container
                 || chk_item.structure_type() == StructureType::Storage
                 || chk_item.structure_type() == StructureType::Link
-                || chk_item.structure_type() == StructureType::Lab
-                || (*resource_kind == ResourceKind::ENERGY
-                    && chk_item.structure_type() == StructureType::Terminal)
+                || chk_item.structure_type() == StructureType::Terminal
             {
                 if check_my_structure(chk_item)
                     || (chk_item.structure_type() == StructureType::Container)
@@ -1875,7 +1875,7 @@ pub fn find_nearest_stored_source(
     return search_many(creep, find_item_list, option);
 }
 
-pub fn find_nearest_source(
+pub fn find_nearest_exhausted_source(
     creep: &screeps::objects::Creep,
     harvest_kind: &ResourceKind,
 ) -> screeps::pathfinder::SearchResults {
@@ -1908,12 +1908,14 @@ pub fn find_nearest_source(
             }
 
             for chk_item in item_list.iter() {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
+                if (chk_item.energy() <= 0) && (chk_item.ticks_to_regeneration() < 50)  {
+                    let mut object: Position = creep.pos();
+                    object.set_x(chk_item.pos().x());
+                    object.set_y(chk_item.pos().y());
+                    object.set_room_name(chk_item.room().unwrap().name());
 
-                find_item_list.push((object.clone(), 1));
+                    find_item_list.push((object.clone(), 1));
+                }
             }
         }
 
@@ -1943,12 +1945,10 @@ pub fn find_nearest_source(
             }
 
             for chk_item in item_list.iter() {
-                let mut object: Position = creep.pos();
-
                 let look_result = creep.room().expect("I can't see").look_for_at_xy(
                     look::STRUCTURES,
-                    creep.pos().x(),
-                    creep.pos().y(),
+                    chk_item.pos().x(),
+                    chk_item.pos().y(),
                 );
 
                 let mut is_extractor_equited = false;
@@ -1963,6 +1963,8 @@ pub fn find_nearest_source(
                 }
 
                 if is_extractor_equited {
+                    let mut object: Position = creep.pos();
+
                     object.set_x(chk_item.pos().x());
                     object.set_y(chk_item.pos().y());
                     object.set_room_name(chk_item.room().unwrap().name());
