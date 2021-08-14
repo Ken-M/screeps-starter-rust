@@ -32,6 +32,10 @@ pub fn run_market() {
         } else {
             my_sell_orders += 1;
         }
+
+        if my_order.remaining_amount <= 0 {
+            game::market::cancel_order(my_order.id.as_str());
+        }
     }
 
     if market_count % 50 == 0 {
@@ -62,15 +66,18 @@ pub fn run_market() {
                     ));
 
                     let mut target_price: f64 = 0 as f64;
+                    let mut target_price_own: f64 = 0 as f64;
                     let mut num_data: u128 = 0;
 
                     for history in market_history {
                         target_price += history.avg_price + history.stddev_price;
+                        target_price_own += history.avg_price - history.stddev_price;
                         num_data += 1;
                     }
 
                     if num_data > 0 {
                         target_price = target_price / num_data as f64;
+                        target_price_own = target_price_own / num_data as f64;
                     }
 
                     // check buy orders.
@@ -123,16 +130,16 @@ pub fn run_market() {
 
                         if found_count < 3 {
                             let amount =
-                                (((cur_credits as f64 * 0.5) / 0.05) / target_price) as u32;
+                                (((cur_credits as f64 * 0.5) / 0.05) / target_price_own) as u32;
                             let amount = std::cmp::min(amount, stored_amount / 2);
                             info!(
                                 "create a Sell deal: resource type:{:?}, amount:{:?}, price:{:?}",
-                                resource, amount, target_price
+                                resource, amount, target_price_own
                             );
                             let ret = game::market::create_order(
                                 OrderType::Sell,
                                 screeps::MarketResourceType::Resource(resource),
-                                target_price,
+                                target_price_own,
                                 amount,
                                 Some(room.name()),
                             );
@@ -167,15 +174,18 @@ pub fn run_market() {
                 ));
 
                 let mut target_price: f64 = 0 as f64;
+                let mut target_price_own: f64 = 0 as f64;
                 let mut num_data: u128 = 0;
 
                 for history in market_history {
                     target_price += history.avg_price - history.stddev_price;
+                    target_price_own += history.avg_price + history.stddev_price;
                     num_data += 1;
                 }
 
                 if num_data > 0 {
                     target_price = target_price / num_data as f64;
+                    target_price_own = target_price_own / num_data as f64;
                 }
 
                 // check buy orders.
@@ -228,18 +238,19 @@ pub fn run_market() {
                     }
 
                     if found_count < 3 {
-                        let amount = (((cur_credits as f64 * 0.5) / 0.05) / target_price) as u32;
+                        let amount =
+                            (((cur_credits as f64 * 0.5) / 0.05) / target_price_own) as u32;
                         let amount = std::cmp::min(amount, terminal_energy_capacity as u32 / 2);
                         info!(
                             "create a Buy deal: resource type:{:?}, amount:{:?}, price:{:?}",
                             ResourceType::Energy,
                             amount,
-                            target_price
+                            target_price_own
                         );
                         let ret = game::market::create_order(
                             OrderType::Buy,
                             screeps::MarketResourceType::Resource(ResourceType::Energy),
-                            target_price,
+                            target_price_own,
                             amount,
                             Some(room.name()),
                         );
