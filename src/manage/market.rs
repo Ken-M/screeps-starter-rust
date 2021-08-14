@@ -9,11 +9,15 @@ use screeps::{
 pub fn run_market() {
     info!("running market");
 
-    let market_count = screeps::memory::root()
+    let mut market_count = screeps::memory::root()
         .i32("market_counter")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    screeps::memory::root().set("market_counter", market_count + 1);
+    market_count += 1;
+    if market_count > 100 {
+        market_count = 0;
+    }
+    screeps::memory::root().set("market_counter", market_count);
 
     let cur_credits = game::market::credits();
     info!("current credits:{:?}", cur_credits);
