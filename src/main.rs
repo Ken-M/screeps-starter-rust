@@ -6,12 +6,12 @@ use stdweb::js;
 
 //mod attack;
 //mod defence;
+mod constants;
 mod create;
 mod creeps;
 mod defence;
 mod manage;
 mod util;
-mod constants;
 
 mod logging;
 
@@ -50,7 +50,7 @@ fn game_loop() {
     util::clear_init_flag();
 
     info!("running market cpu:{}", screeps::game::cpu::get_used());
-    manage::market::run_market() ;
+    manage::market::run_market();
 
     info!("running links cpu:{}", screeps::game::cpu::get_used());
     manage::link::run_link();

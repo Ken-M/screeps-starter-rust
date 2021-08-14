@@ -1,5 +1,5 @@
+use crate::constants::*;
 use std::u128;
-use crate::constants::* ;
 
 use crate::util::*;
 use log::*;

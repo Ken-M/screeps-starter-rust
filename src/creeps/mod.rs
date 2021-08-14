@@ -54,7 +54,7 @@ fn reset_source_target(
         if *harvest_kind == ResourceKind::ENERGY {
             let res = find_nearest_stored_source(&creep, harvest_kind, true);
 
-            if res.load_local_path().len() > 0 && res.incomplete == false{
+            if res.load_local_path().len() > 0 && res.incomplete == false {
                 let last_pos = *(res.load_local_path().last().unwrap());
                 let json_str = serde_json::to_string(&last_pos).unwrap();
                 creep.memory().set("target_pos", json_str);
@@ -74,7 +74,7 @@ fn reset_source_target(
         // storageをチェック.
         let res = find_nearest_stored_source(&creep, harvest_kind, false);
 
-        if res.load_local_path().len() > 0 && res.incomplete == false{
+        if res.load_local_path().len() > 0 && res.incomplete == false {
             let last_pos = *(res.load_local_path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
@@ -97,7 +97,7 @@ fn reset_source_target(
             res.load_local_path()
         );
 
-        if res.load_local_path().len() > 0 && res.incomplete == false{
+        if res.load_local_path().len() > 0 && res.incomplete == false {
             let last_pos = *(res.load_local_path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
@@ -237,7 +237,7 @@ pub fn creep_loop() {
     let mut num_upgrader: i32 = 0;
     let mut num_harvester_spawn: i32 = 0;
     let mut num_harvester_mineral: i32 = 0;
-    let mut num_carrier_mineral : i32 = 0;
+    let mut num_carrier_mineral: i32 = 0;
     let mut num_repairer: i32 = 0;
 
     let mut opt_num_attackable_short: i32 = 0;
@@ -373,7 +373,7 @@ pub fn creep_loop() {
                     num_carrier_mineral += 1;
                     harvest_kind = ResourceKind::MINELALS;
                     role_string = String::from("carrier_mineral");
-                    is_harvester = false;                    
+                    is_harvester = false;
                 }
             }
 
@@ -406,7 +406,9 @@ pub fn creep_loop() {
         }
 
         //// harvest resrouce kind.
-        if role_string == String::from("harvester_mineral") || role_string == String::from("carrier_mineral") {
+        if role_string == String::from("harvester_mineral")
+            || role_string == String::from("carrier_mineral")
+        {
             harvest_kind = ResourceKind::MINELALS;
         }
 
@@ -789,7 +791,7 @@ pub fn creep_loop() {
 
                 "carrier_mineral" => {
                     harvester::run_carrier_mineral(&creep);
-                }                
+                }
 
                 "builder" => {
                     builder::run_builder(&creep);

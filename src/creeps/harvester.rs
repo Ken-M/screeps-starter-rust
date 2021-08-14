@@ -450,7 +450,6 @@ pub fn run_harvester_mineral(creep: &Creep) {
     }
 }
 
-
 pub fn run_carrier_mineral(creep: &Creep) {
     let _name = creep.name();
     info!("running carrier mineral {}", creep.name());
@@ -468,8 +467,7 @@ pub fn run_carrier_mineral(creep: &Creep) {
     let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 
     for structure in structures.iter() {
-        if structure.structure_type() != StructureType::Terminal
-        {
+        if structure.structure_type() != StructureType::Terminal {
             //Terminal以外にはtransferしない.
             continue;
         }
@@ -493,14 +491,10 @@ pub fn run_carrier_mineral(creep: &Creep) {
                     }
                 }
             }
-
         }
     }
 
-    let res = find_nearest_transfarable_terminal(
-        &creep,
-        &ResourceKind::MINELALS
-    );
+    let res = find_nearest_transfarable_terminal(&creep, &ResourceKind::MINELALS);
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
