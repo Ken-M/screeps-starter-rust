@@ -87,7 +87,7 @@ pub fn run_market() {
                     for order in all_orders {
                         if order.order_type == OrderType::Buy {
                             if order.price >= target_price {
-                                let amount = terminal_energy as f64
+                                let amount = (terminal_energy as f64 * 0.7)
                                     / game::market::calc_transaction_cost(
                                         1,
                                         room.name(),
@@ -188,19 +188,23 @@ pub fn run_market() {
                     target_price_own = target_price_own / num_data as f64;
                 }
 
-                // check buy orders.
+                // check sell orders.
                 let all_orders = game::market::get_all_orders(Some(
                     screeps::MarketResourceType::Resource(ResourceType::Energy),
                 ));
                 for order in all_orders {
                     if order.order_type == OrderType::Sell {
                         if order.price <= target_price {
-                            let amount = terminal_energy as f64
+                            let amount = (terminal_energy as f64 * 0.7)
                                 / game::market::calc_transaction_cost(
                                     1,
                                     room.name(),
                                     order.room_name.expect("not resource order"),
                                 );
+                            let amount = std::cmp::min(
+                                amount as u32,
+                                ((cur_credits as f64 * 0.7) / (order.price as f64)) as u32,
+                            );
                             let amount =
                                 std::cmp::min(amount as u32, terminal_energy_capacity as u32);
                             let amount = std::cmp::min(amount as u32, order.remaining_amount);
@@ -237,9 +241,9 @@ pub fn run_market() {
                         }
                     }
 
-                    if found_count < 3 {
+                    if found_count < 1 {
                         let amount =
-                            (((cur_credits as f64 * 0.5) / 0.05) / target_price_own) as u32;
+                            ((cur_credits as f64 * 0.7) / (target_price_own * 1.05)) as u32;
                         let amount = std::cmp::min(amount, terminal_energy_capacity as u32 / 2);
                         info!(
                             "create a Buy deal: resource type:{:?}, amount:{:?}, price:{:?}",
