@@ -368,7 +368,7 @@ pub fn creep_loop() {
                     role_string = String::from("harvester");
                     is_harvester = true;
                     cap_worker_carry += creep.store_capacity(None) as u128;
-                } else if (num_carrier_mineral <= 0) {
+                } else if num_carrier_mineral <= 0 {
                     creep.memory().set("role", "carrier_mineral");
                     num_carrier_mineral += 1;
                     harvest_kind = ResourceKind::MINELALS;

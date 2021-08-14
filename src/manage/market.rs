@@ -1,7 +1,7 @@
-use crate::util::*;
+
 use log::*;
 
-use screeps::Structure;
+
 use screeps::{
     find, game, game::market, game::market::*, local::ObjectId, objects::StructureLink,
     pathfinder::SearchResults, prelude::*, Attackable, Creep, Part, ResourceType, ReturnCode,
@@ -11,7 +11,7 @@ use screeps::{
 pub fn run_market() {
     info!("running market");
 
-    let mut market_count = screeps::memory::root()
+    let market_count = screeps::memory::root()
         .i32("market_counter")
         .unwrap_or(Some(0))
         .unwrap_or(0);
