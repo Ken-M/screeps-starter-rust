@@ -34,7 +34,7 @@ fn reset_source_target(
             res.load_local_path()
         );
 
-        if res.load_local_path().len() > 0 {
+        if res.load_local_path().len() > 0 && res.incomplete == false {
             let last_pos = *(res.load_local_path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
@@ -54,7 +54,7 @@ fn reset_source_target(
         if *harvest_kind == ResourceKind::ENERGY {
             let res = find_nearest_stored_source(&creep, harvest_kind, true);
 
-            if res.load_local_path().len() > 0 {
+            if res.load_local_path().len() > 0 && res.incomplete == false{
                 let last_pos = *(res.load_local_path().last().unwrap());
                 let json_str = serde_json::to_string(&last_pos).unwrap();
                 creep.memory().set("target_pos", json_str);
@@ -74,7 +74,7 @@ fn reset_source_target(
         // storageをチェック.
         let res = find_nearest_stored_source(&creep, harvest_kind, false);
 
-        if res.load_local_path().len() > 0 {
+        if res.load_local_path().len() > 0 && res.incomplete == false{
             let last_pos = *(res.load_local_path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
@@ -97,7 +97,7 @@ fn reset_source_target(
             res.load_local_path()
         );
 
-        if res.load_local_path().len() > 0 {
+        if res.load_local_path().len() > 0 && res.incomplete == false{
             let last_pos = *(res.load_local_path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
@@ -237,6 +237,7 @@ pub fn creep_loop() {
     let mut num_upgrader: i32 = 0;
     let mut num_harvester_spawn: i32 = 0;
     let mut num_harvester_mineral: i32 = 0;
+    let mut num_carrier_mineral : i32 = 0;
     let mut num_repairer: i32 = 0;
 
     let mut opt_num_attackable_short: i32 = 0;
@@ -287,6 +288,10 @@ pub fn creep_loop() {
 
             "harvester_mineral" => {
                 num_harvester_mineral += 1;
+            }
+
+            "carrier_mineral" => {
+                num_carrier_mineral += 1;
             }
 
             "builder" => {
@@ -357,12 +362,18 @@ pub fn creep_loop() {
                     harvest_kind = ResourceKind::MINELALS;
                     role_string = String::from("harvester_mineral");
                     is_harvester = true;
-                } else {
+                } else if cap_worker_carry < 1000 {
                     creep.memory().set("role", "harvester");
                     num_harvester += 1;
                     role_string = String::from("harvester");
                     is_harvester = true;
                     cap_worker_carry += creep.store_capacity(None) as u128;
+                } else if (num_carrier_mineral <= 0) {
+                    creep.memory().set("role", "carrier_mineral");
+                    num_carrier_mineral += 1;
+                    harvest_kind = ResourceKind::MINELALS;
+                    role_string = String::from("carrier_mineral");
+                    is_harvester = false;                    
                 }
             }
 
@@ -395,7 +406,7 @@ pub fn creep_loop() {
         }
 
         //// harvest resrouce kind.
-        if role_string == String::from("harvester_mineral") {
+        if role_string == String::from("harvester_mineral") || role_string == String::from("carrier_mineral") {
             harvest_kind = ResourceKind::MINELALS;
         }
 
@@ -776,6 +787,10 @@ pub fn creep_loop() {
                     harvester::run_harvester_mineral(&creep);
                 }
 
+                "carrier_mineral" => {
+                    harvester::run_carrier_mineral(&creep);
+                }                
+
                 "builder" => {
                     builder::run_builder(&creep);
                 }
@@ -807,6 +822,7 @@ pub fn creep_loop() {
     screeps::memory::root().set("num_harvester", num_harvester);
     screeps::memory::root().set("num_harvester_spawn", num_harvester_spawn);
     screeps::memory::root().set("num_harvester_mineral", num_harvester_mineral);
+    screeps::memory::root().set("num_carrier_mineral", num_carrier_mineral);
     screeps::memory::root().set("num_repairer", num_repairer);
 
     screeps::memory::root().set("opt_num_attackable_short", opt_num_attackable_short);

@@ -1,0 +1,1 @@
+pub const REPAIRER_DYING_THRESHOLD : u128 = 3000 ;

@@ -1,4 +1,5 @@
 use std::u128;
+use crate::constants::* ;
 
 use crate::util::*;
 use log::*;
@@ -45,7 +46,7 @@ pub fn run_repairer(creep: &Creep) {
     // Wall以外でまず確認.
     for structure in structures.iter() {
         if check_repairable(structure) {
-            if get_live_tickcount(structure).unwrap_or(10000) as u128 <= 3000 {
+            if get_live_tickcount(structure).unwrap_or(10000) as u128 <= REPAIRER_DYING_THRESHOLD {
                 let r = creep.repair(structure);
 
                 if r == ReturnCode::Ok {
@@ -182,7 +183,7 @@ pub fn run_repairer(creep: &Creep) {
 
     //----------------------------------------
     // Wall以外でまず確認.
-    let res = find_nearest_repairable_item_except_wall_dying(&creep);
+    let res = find_nearest_repairable_item_except_wall_dying(&creep, REPAIRER_DYING_THRESHOLD);
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res);

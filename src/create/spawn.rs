@@ -36,6 +36,10 @@ pub fn do_spawn() {
         .i32("num_harvester_mineral")
         .unwrap_or(Some(0))
         .unwrap_or(0);
+    let _num_carrier_mineral: i32 = screeps::memory::root()
+        .i32("num_carrier_mineral")
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
     let _num_repairer: i32 = screeps::memory::root()
         .i32("num_repairer")
         .unwrap_or(Some(0))

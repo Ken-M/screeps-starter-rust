@@ -449,3 +449,66 @@ pub fn run_harvester_mineral(creep: &Creep) {
         return;
     }
 }
+
+
+pub fn run_carrier_mineral(creep: &Creep) {
+    let _name = creep.name();
+    info!("running carrier mineral {}", creep.name());
+
+    if creep.store_used_capacity(None) <= 0 {
+        // nothing to do.
+        return;
+    }
+
+    let structures = &creep
+        .room()
+        .expect("room is not visible to you")
+        .find(STRUCTURES);
+
+    let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
+
+    for structure in structures.iter() {
+        if structure.structure_type() != StructureType::Terminal
+        {
+            //Terminal以外にはtransferしない.
+            continue;
+        }
+
+        for resource_type in resrouce_type_list.iter() {
+            if &creep.store_of(*resource_type) > &(0 as u32) {
+                if check_transferable(structure, &resource_type) {
+                    match structure.as_transferable() {
+                        Some(transf) => {
+                            let r = creep.transfer_all(transf, *resource_type);
+
+                            if r == ReturnCode::Ok {
+                                info!("transferd to my_structure!!");
+                                return;
+                            }
+                        }
+
+                        None => {
+                            // my_struct is not transferable.
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+
+    let res = find_nearest_transfarable_terminal(
+        &creep,
+        &ResourceKind::MINELALS
+    );
+    debug!("go to:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res);
+        if res != ReturnCode::Ok {
+            info!("couldn't move to transfer: {:?}", res);
+        }
+
+        return;
+    }
+}
