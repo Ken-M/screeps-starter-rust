@@ -1,6 +1,4 @@
-
 use log::*;
-
 
 use screeps::{
     find, game, game::market, game::market::*, local::ObjectId, objects::StructureLink,
@@ -20,11 +18,19 @@ pub fn run_market() {
     let cur_credits = game::market::credits();
     info!("current credits:{:?}", cur_credits);
 
+    let mut my_sell_orders = 0;
+    let mut my_buy_orders = 0;
+
     for my_order in game::market::orders().values() {
         info!("my order:{:?}", my_order);
+        if my_order.order_type == OrderType::Buy {
+            my_buy_orders += 1;
+        } else {
+            my_sell_orders += 1;
+        }
     }
 
-    if market_count % 10 == 0 {
+    if market_count % 50 == 0 {
         for room in game::rooms::values() {
             if let Some(my_terminal) = room.terminal() {
                 //sell orders.
@@ -98,27 +104,44 @@ pub fn run_market() {
                     }
 
                     // make sell orders.
-                    let amount = (((cur_credits as f64 * 0.5) / 0.05) / target_price) as u32;
-                    let amount = std::cmp::min(amount, stored_amount / 2);
-                    info!(
-                        "create a Sell deal: resource type:{:?}, amount:{:?}, price:{:?}",
-                        resource, amount, target_price
-                    );
-                    let ret = game::market::create_order(
-                        OrderType::Sell,
-                        screeps::MarketResourceType::Resource(resource),
-                        target_price,
-                        amount,
-                        Some(room.name()),
-                    );
+                    if my_sell_orders < 10 {
+                        let mut found_count = 0;
 
-                    if ret != ReturnCode::Ok {
-                        warn!("ret:{:?}", ret);
+                        for my_order in game::market::orders().values() {
+                            if my_order.order_type == OrderType::Sell {
+                                if my_order.resource_type
+                                    == screeps::MarketResourceType::Resource(resource)
+                                {
+                                    found_count += 1;
+                                }
+                            }
+                        }
+
+                        if found_count < 3 {
+                            let amount =
+                                (((cur_credits as f64 * 0.5) / 0.05) / target_price) as u32;
+                            let amount = std::cmp::min(amount, stored_amount / 2);
+                            info!(
+                                "create a Sell deal: resource type:{:?}, amount:{:?}, price:{:?}",
+                                resource, amount, target_price
+                            );
+                            let ret = game::market::create_order(
+                                OrderType::Sell,
+                                screeps::MarketResourceType::Resource(resource),
+                                target_price,
+                                amount,
+                                Some(room.name()),
+                            );
+
+                            if ret != ReturnCode::Ok {
+                                warn!("ret:{:?}", ret);
+                            }
+                        }
                     }
                 }
             }
         }
-    } else if market_count % 10 == 5 {
+    } else if market_count % 50 == 25 {
         for room in game::rooms::values() {
             if let Some(my_terminal) = room.terminal() {
                 //buy energy orders.
@@ -187,24 +210,40 @@ pub fn run_market() {
                 }
 
                 // make buy orders.
-                let amount = (((cur_credits as f64 * 0.5) / 0.05) / target_price) as u32;
-                let amount = std::cmp::min(amount, terminal_energy_capacity as u32 / 2);
-                info!(
-                    "create a Buy deal: resource type:{:?}, amount:{:?}, price:{:?}",
-                    ResourceType::Energy,
-                    amount,
-                    target_price
-                );
-                let ret = game::market::create_order(
-                    OrderType::Buy,
-                    screeps::MarketResourceType::Resource(ResourceType::Energy),
-                    target_price,
-                    amount,
-                    Some(room.name()),
-                );
+                if my_buy_orders < 10 {
+                    let mut found_count = 0;
 
-                if ret != ReturnCode::Ok {
-                    warn!("ret:{:?}", ret);
+                    for my_order in game::market::orders().values() {
+                        if my_order.order_type == OrderType::Buy {
+                            if my_order.resource_type
+                                == screeps::MarketResourceType::Resource(ResourceType::Energy)
+                            {
+                                found_count += 1;
+                            }
+                        }
+                    }
+
+                    if found_count < 3 {
+                        let amount = (((cur_credits as f64 * 0.5) / 0.05) / target_price) as u32;
+                        let amount = std::cmp::min(amount, terminal_energy_capacity as u32 / 2);
+                        info!(
+                            "create a Buy deal: resource type:{:?}, amount:{:?}, price:{:?}",
+                            ResourceType::Energy,
+                            amount,
+                            target_price
+                        );
+                        let ret = game::market::create_order(
+                            OrderType::Buy,
+                            screeps::MarketResourceType::Resource(ResourceType::Energy),
+                            target_price,
+                            amount,
+                            Some(room.name()),
+                        );
+
+                        if ret != ReturnCode::Ok {
+                            warn!("ret:{:?}", ret);
+                        }
+                    }
                 }
             }
         }
