@@ -44,7 +44,7 @@ pub fn run_harvester(creep: &Creep) {
             continue;
         }
 
-        if check_transferable(structure, &ResourceType::Energy) {
+        if check_transferable(structure, &ResourceType::Energy, None) {
             match structure.as_transferable() {
                 Some(transf) => {
                     let r = creep.transfer_all(transf, ResourceType::Energy);
@@ -67,6 +67,7 @@ pub fn run_harvester(creep: &Creep) {
         &StructureType::Extension,
         &ResourceType::Energy,
         Some(20 as f64),
+        None,
     );
     debug!("go to extention:{:?}", res.load_local_path());
 
@@ -100,7 +101,7 @@ pub fn run_harvester(creep: &Creep) {
             continue;
         }
 
-        if check_transferable(structure, &ResourceType::Energy) {
+        if check_transferable(structure, &ResourceType::Energy, None) {
             if structure.structure_type() == StructureType::Container {
                 match structure.as_transferable() {
                     Some(_transf) => {
@@ -197,6 +198,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
         &StructureType::Spawn,
         &ResourceType::Energy,
         None,
+        None,
     );
     debug!("go to:{:?}", res.load_local_path());
 
@@ -261,6 +263,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
         &StructureType::Extension,
         &ResourceType::Energy,
         None,
+        None,
     );
     debug!("go to:{:?}", res.load_local_path());
 
@@ -289,7 +292,9 @@ pub fn run_harvester_spawn(creep: &Creep) {
                                 match my_tower.as_has_store() {
                                     Some(has_store) => {
                                         if has_store.store_free_capacity(Some(ResourceType::Energy))
-                                            > 0
+                                            > (has_store.store_capacity(Some(ResourceType::Energy))
+                                                as i32
+                                                / 4 as i32)
                                         {
                                             let r =
                                                 creep.transfer_all(transf, ResourceType::Energy);
@@ -326,6 +331,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
         &StructureType::Tower,
         &ResourceType::Energy,
         None,
+        Some(0.25),
     );
     debug!("go to:{:?}", res.load_local_path());
 
@@ -379,7 +385,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
 
         for resource_type in resrouce_type_list.iter() {
             if &creep.store_of(*resource_type) > &(0 as u32) {
-                if check_transferable(structure, &resource_type) {
+                if check_transferable(structure, &resource_type, None) {
                     if structure.structure_type() == StructureType::Container {
                         match structure.as_transferable() {
                             Some(_transf) => {
@@ -474,7 +480,7 @@ pub fn run_carrier_mineral(creep: &Creep) {
 
         for resource_type in resrouce_type_list.iter() {
             if &creep.store_of(*resource_type) > &(0 as u32) {
-                if check_transferable(structure, &resource_type) {
+                if check_transferable(structure, &resource_type, None) {
                     match structure.as_transferable() {
                         Some(transf) => {
                             let r = creep.transfer_all(transf, *resource_type);

@@ -254,8 +254,6 @@ pub fn creep_loop() {
 
         let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
 
-        push_room_name(&creep.room().expect("room is not visible to you").name());
-
         role_string = role_and_attacker_kind.0;
         attacker_kind = role_and_attacker_kind.1;
 

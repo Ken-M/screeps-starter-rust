@@ -5,8 +5,8 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties, RoomPosition,
-    Source, Structure, StructureProperties,
+    game, game::market, game::market::*, pathfinder::*, ConstructionSite, HasStore, LookResult,
+    RoomObjectProperties, RoomPosition, Source, Structure, StructureProperties,
 };
 
 use std::cmp::*;
@@ -49,7 +49,6 @@ lazy_static! {
         RwLock::new(HashMap::new());
     static ref STRUCTURE_HP_MIN_EXCEPTWALL_CACHE: RwLock<StructureHpMin_ExceptWall> =
         RwLock::new(HashMap::new());
-    static ref ROOM_LIST: RwLock<RoomHashSet> = RwLock::new(HashSet::new());
 }
 
 pub fn clear_init_flag() {
@@ -74,21 +73,6 @@ pub fn clear_init_flag() {
 
     let mut structure_hp_min_exceptwall = STRUCTURE_HP_MIN_EXCEPTWALL_CACHE.write().unwrap();
     structure_hp_min_exceptwall.clear();
-
-    let mut room_list = ROOM_LIST.write().unwrap();
-    room_list.clear();
-}
-
-pub fn push_room_name(room_name: &RoomName) {
-    let mut room_list = ROOM_LIST.write().unwrap();
-    room_list.insert(*room_name);
-}
-
-pub fn get_room_list() -> HashSet<RoomName> {
-    let room_list_hash = ROOM_LIST.read().unwrap();
-    let room_list = room_list_hash.clone();
-
-    return room_list;
 }
 
 #[derive(PartialEq, Debug)]
@@ -549,6 +533,7 @@ pub fn check_my_structure(structure: &screeps::objects::Structure) -> bool {
 pub fn check_transferable(
     structure: &screeps::objects::Structure,
     resource_type: &ResourceType,
+    capacity_rate: Option<f64>,
 ) -> bool {
     match structure.as_owned() {
         Some(my_structure) => {
@@ -560,7 +545,11 @@ pub fn check_transferable(
                 Some(_transf) => {
                     match structure.as_has_store() {
                         Some(has_store) => {
-                            if has_store.store_free_capacity(Some(*resource_type)) > 0 {
+                            if has_store.store_free_capacity(Some(*resource_type))
+                                > (has_store.store_capacity(Some(*resource_type)) as f64
+                                    * capacity_rate.unwrap_or(0 as f64))
+                                    as i32
+                            {
                                 return true;
                             }
                         }
@@ -1031,20 +1020,12 @@ pub fn find_nearest_transfarable_item(
         .find(find::STRUCTURES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1090,7 +1071,7 @@ pub fn find_nearest_transfarable_item(
 
         for resource_type in resource_type_list.iter() {
             if creep.store_of(*resource_type) > 0 as u32 {
-                if check_transferable(chk_item, resource_type) {
+                if check_transferable(chk_item, resource_type, None) {
                     find_item_list.push((chk_item.clone(), dist));
                     break;
                 }
@@ -1116,20 +1097,12 @@ pub fn find_nearest_transfarable_terminal(
         .find(find::STRUCTURES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1150,7 +1123,7 @@ pub fn find_nearest_transfarable_terminal(
 
         for resource_type in resource_type_list.iter() {
             if creep.store_of(*resource_type) > 0 as u32 {
-                if check_transferable(chk_item, resource_type) {
+                if check_transferable(chk_item, resource_type, None) {
                     find_item_list.push((chk_item.clone(), dist));
                     break;
                 }
@@ -1174,22 +1147,13 @@ pub fn find_nearest_repairable_item_onlywall_repair_hp(
         .room()
         .expect("room is not visible to you")
         .find(find::STRUCTURES);
-
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1229,20 +1193,12 @@ pub fn find_nearest_repairable_item_onlywall_hp(
         .find(find::STRUCTURES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1275,20 +1231,12 @@ pub fn find_nearest_repairable_item_except_wall_hp(
         .find(find::STRUCTURES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1323,20 +1271,12 @@ pub fn find_nearest_repairable_item_except_wall_dying(
         .find(find::STRUCTURES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1366,6 +1306,7 @@ pub fn find_nearest_transferable_structure(
     structure_type: &StructureType,
     resource_type: &ResourceType,
     max_cost: Option<f64>,
+    capacity_rate: Option<f64>,
 ) -> screeps::pathfinder::SearchResults {
     let item_list = &mut creep
         .room()
@@ -1373,20 +1314,12 @@ pub fn find_nearest_transferable_structure(
         .find(find::STRUCTURES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1395,7 +1328,7 @@ pub fn find_nearest_transferable_structure(
 
     for chk_item in item_list {
         if chk_item.structure_type() == *structure_type {
-            if check_transferable(chk_item, resource_type) {
+            if check_transferable(chk_item, resource_type, capacity_rate) {
                 find_item_list.push((chk_item.clone(), 1));
             }
         }
@@ -1420,20 +1353,12 @@ pub fn find_nearest_construction_site(
         .find(MY_CONSTRUCTION_SITES);
 
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::MY_CONSTRUCTION_SITES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::MY_CONSTRUCTION_SITES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -1470,20 +1395,13 @@ pub fn find_nearest_active_source(
             .find(DROPPED_RESOURCES);
 
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::DROPPED_RESOURCES);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::DROPPED_RESOURCES);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1509,20 +1427,13 @@ pub fn find_nearest_active_source(
             .find(find::TOMBSTONES);
 
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::TOMBSTONES);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::TOMBSTONES);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1548,20 +1459,13 @@ pub fn find_nearest_active_source(
             .find(find::RUINS);
 
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::RUINS);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::RUINS);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1590,20 +1494,14 @@ pub fn find_nearest_active_source(
                 .find(SOURCES_ACTIVE);
 
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::SOURCES_ACTIVE);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::SOURCES_ACTIVE);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -1622,22 +1520,15 @@ pub fn find_nearest_active_source(
                 .room()
                 .expect("room is not visible to you")
                 .find(find::MINERALS);
-
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::MINERALS);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::MINERALS);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -1678,20 +1569,14 @@ pub fn find_nearest_active_source(
                 .find(find::DEPOSITS);
 
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::DEPOSITS);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::DEPOSITS);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -1710,22 +1595,15 @@ pub fn find_nearest_active_source(
                 .room()
                 .expect("room is not visible to you")
                 .find(find::STRUCTURES);
-
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::STRUCTURES);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::STRUCTURES);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -1765,22 +1643,14 @@ pub fn find_nearest_stored_source(
             .room()
             .expect("room is not visible to you")
             .find(DROPPED_RESOURCES);
-
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::DROPPED_RESOURCES);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::DROPPED_RESOURCES);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1804,22 +1674,14 @@ pub fn find_nearest_stored_source(
             .room()
             .expect("room is not visible to you")
             .find(find::TOMBSTONES);
-
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::TOMBSTONES);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::TOMBSTONES);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1843,22 +1705,14 @@ pub fn find_nearest_stored_source(
             .room()
             .expect("room is not visible to you")
             .find(find::RUINS);
-
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::RUINS);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::RUINS);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1883,22 +1737,14 @@ pub fn find_nearest_stored_source(
             .room()
             .expect("room is not visible to you")
             .find(find::STRUCTURES);
-
         {
-            let room_list_hash = ROOM_LIST.read().unwrap();
-            let room_list = room_list_hash.clone();
+            let room_list = game::rooms::values();
 
             for room_item in room_list.iter() {
-                if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                    let room = screeps::game::rooms::get(*room_item);
-
-                    match room {
-                        Some(room_obj) => {
-                            let local_list = room_obj.find(find::STRUCTURES);
-                            item_list.extend(local_list);
-                        }
-                        None => {}
-                    }
+                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
+                {
+                    let local_list = room_item.find(find::STRUCTURES);
+                    item_list.extend(local_list);
                 }
             }
         }
@@ -1954,22 +1800,15 @@ pub fn find_nearest_exhausted_source(
                 .room()
                 .expect("room is not visible to you")
                 .find(find::SOURCES);
-
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::SOURCES);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::SOURCES);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -1991,22 +1830,15 @@ pub fn find_nearest_exhausted_source(
                 .room()
                 .expect("room is not visible to you")
                 .find(find::MINERALS);
-
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::MINERALS);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::MINERALS);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -2046,22 +1878,15 @@ pub fn find_nearest_exhausted_source(
                 .room()
                 .expect("room is not visible to you")
                 .find(find::SOURCES);
-
             {
-                let room_list_hash = ROOM_LIST.read().unwrap();
-                let room_list = room_list_hash.clone();
+                let room_list = game::rooms::values();
 
                 for room_item in room_list.iter() {
-                    if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                        let room = screeps::game::rooms::get(*room_item);
-
-                        match room {
-                            Some(room_obj) => {
-                                let local_list = room_obj.find(find::SOURCES);
-                                item_list.extend(local_list);
-                            }
-                            None => {}
-                        }
+                    if room_item.name()
+                        != *(&creep.room().expect("room is not visible to you").name())
+                    {
+                        let local_list = room_item.find(find::SOURCES);
+                        item_list.extend(local_list);
                     }
                 }
             }
@@ -2093,22 +1918,13 @@ pub fn find_nearest_dropped_resource(
         .room()
         .expect("room is not visible to you")
         .find(DROPPED_RESOURCES);
-
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::DROPPED_RESOURCES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::DROPPED_RESOURCES);
+                item_list.extend(local_list);
             }
         }
     }
@@ -2140,22 +1956,13 @@ pub fn find_flee_path_from_active_source(
         .room()
         .expect("room is not visible to you")
         .find(SOURCES_ACTIVE);
-
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::SOURCES_ACTIVE);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::SOURCES_ACTIVE);
+                item_list.extend(local_list);
             }
         }
     }
@@ -2207,22 +2014,13 @@ pub fn find_nearest_room_controler(
         .room()
         .expect("room is not visible to you")
         .find(STRUCTURES);
-
     {
-        let room_list_hash = ROOM_LIST.read().unwrap();
-        let room_list = room_list_hash.clone();
+        let room_list = game::rooms::values();
 
         for room_item in room_list.iter() {
-            if *room_item != *(&creep.room().expect("room is not visible to you").name()) {
-                let room = screeps::game::rooms::get(*room_item);
-
-                match room {
-                    Some(room_obj) => {
-                        let local_list = room_obj.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                    None => {}
-                }
+            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
+                let local_list = room_item.find(find::STRUCTURES);
+                item_list.extend(local_list);
             }
         }
     }

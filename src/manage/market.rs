@@ -115,7 +115,7 @@ pub fn run_market() {
                     }
 
                     // make sell orders.
-                    if my_sell_orders < 10 {
+                    if my_sell_orders < 40 {
                         let mut found_count = 0;
 
                         for my_order in game::market::orders().values() {
