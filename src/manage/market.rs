@@ -14,7 +14,7 @@ pub fn run_market() {
         .unwrap_or(Some(0))
         .unwrap_or(0);
     market_count += 1;
-    if market_count > 100 {
+    if market_count >= 18000 {
         market_count = 0;
     }
     screeps::memory::root().set("market_counter", market_count);
@@ -27,14 +27,24 @@ pub fn run_market() {
 
     for my_order in game::market::orders().values() {
         info!("my order:{:?}", my_order);
-        if my_order.order_type == OrderType::Buy {
-            my_buy_orders += 1;
-        } else {
-            my_sell_orders += 1;
-        }
 
         if my_order.remaining_amount <= 0 {
             game::market::cancel_order(my_order.id.as_str());
+        } else {
+            if my_order.order_type == OrderType::Buy {
+                my_buy_orders += 1;
+            } else {
+                my_sell_orders += 1;
+
+                if market_count % 9000 == 0 {
+                    if game::time() - my_order.created.unwrap_or(0) > 9000 {
+                        game::market::change_order_price(
+                            my_order.id.as_str(),
+                            my_order.price * 0.95,
+                        );
+                    }
+                }
+            }
         }
     }
 

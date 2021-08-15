@@ -5,8 +5,8 @@ use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
 use screeps::{
-    game, pathfinder::*, ConstructionSite, HasStore, LookResult,
-    RoomObjectProperties, RoomPosition, Source, Structure, StructureProperties,
+    game, pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
+    RoomPosition, Source, Structure, StructureProperties,
 };
 
 use std::cmp::*;

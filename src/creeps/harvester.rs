@@ -274,6 +274,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
         }
     }
 
+    // tower
     debug!("check towers {}", name);
 
     let my_towers = &creep
@@ -326,12 +327,50 @@ pub fn run_harvester_spawn(creep: &Creep) {
         }
     }
 
+    //// move to tower.
     let res = find_nearest_transferable_structure(
         &creep,
         &StructureType::Tower,
         &ResourceType::Energy,
         None,
         Some(0.25),
+    );
+    debug!("go to:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res);
+        if res == ReturnCode::Ok {
+            return;
+        }
+    }
+
+    // terminal
+    debug!("check terminal {}", name);
+
+    let room_terminal = &creep.room().expect("room is not visible to you").terminal();
+
+    if let Some(terminal) = room_terminal {
+        debug!("try transfer to terminal {}", name);
+
+        if terminal.my() == true {
+            if terminal.store_free_capacity(Some(ResourceType::Energy)) > 0 {
+                let r = creep.transfer_all(terminal, ResourceType::Energy);
+
+                if r == ReturnCode::Ok {
+                    info!("transferd to terminal!!");
+                    return;
+                }
+            }
+        }
+    }
+
+    //// move to terminal.
+    let res = find_nearest_transferable_structure(
+        &creep,
+        &StructureType::Terminal,
+        &ResourceType::Energy,
+        None,
+        None,
     );
     debug!("go to:{:?}", res.load_local_path());
 
