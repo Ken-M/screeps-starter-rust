@@ -68,7 +68,7 @@ pub fn run_repairer(creep: &Creep) {
     // 残りhpが少ない物を優先.
     if is_skip_repair == false {
         let stats = get_hp_average(room_name);
-        let threshold = (stats.0 + stats.1) / 2;
+        let threshold = stats.1 + (stats.0 - stats.1)/1000 ;
 
         for structure in structures.iter() {
             if structure.structure_type() != StructureType::Wall {
@@ -109,7 +109,7 @@ pub fn run_repairer(creep: &Creep) {
 
     // 残りhpが少ない物を優先.
     let stats = get_hp_average(room_name);
-    let threshold = (stats.0 + stats.1) / 2;
+    let threshold = stats.1 + (stats.0 - stats.1)/1000 ;
 
     let res = find_nearest_repairable_item_hp(&creep, (threshold + 1) as u32);
 

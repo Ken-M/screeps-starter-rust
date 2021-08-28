@@ -123,7 +123,7 @@ pub fn calc_average(room_name: &RoomName) {
 
                 structure_hp_min.insert(*room_name, hp_min);
                 info!(
-                    "{:?}: structure_hp_average_exceptwall:{:?}/min:{:?}",
+                    "{:?}: structure_hp_average:{:?}/min:{:?}",
                     room_name,
                     total_hp / struct_count,
                     hp_min

@@ -90,7 +90,7 @@ pub fn run_tower() {
 
                         // HPが低い物を確認.
                         let stats = get_hp_average(&room_name);
-                        let threshold = (stats.0 + stats.1) / 2;
+                        let threshold = stats.1 + (stats.0 - stats.1)/1000 ;
 
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
