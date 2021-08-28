@@ -43,7 +43,6 @@ pub fn run_repairer(creep: &Creep) {
     let room_name = &creep.room().expect("room is not visible to you").name();
 
     // 残り時間が短いものを優先.
-    // Wall以外でまず確認.
     for structure in structures.iter() {
         if check_repairable(structure) {
             if get_live_tickcount(structure).unwrap_or(10000) as u128 <= REPAIRER_DYING_THRESHOLD {
@@ -66,15 +65,15 @@ pub fn run_repairer(creep: &Creep) {
         }
     }
 
-    // Wall以外でまず確認.
+    // 残りhpが少ない物を優先.
     if is_skip_repair == false {
-        let stats = get_hp_average_exceptwall(room_name);
+        let stats = get_hp_average(room_name);
         let threshold = (stats.0 + stats.1) / 2;
 
         for structure in structures.iter() {
             if structure.structure_type() != StructureType::Wall {
                 if check_repairable(structure) {
-                    if get_hp_rate(structure).unwrap_or(0) as u128 <= (threshold + 1) {
+                    if get_hp(structure).unwrap_or(0) as u128 <= (threshold + 1) {
                         let r = creep.repair(structure);
 
                         if r == ReturnCode::Ok {
@@ -96,93 +95,8 @@ pub fn run_repairer(creep: &Creep) {
         }
     }
 
-    // Wall含め 5k.
-    if is_skip_repair == false {
-        for structure in structures.iter() {
-            if structure.structure_type() == StructureType::Wall {
-                if check_repairable_hp(structure, 5000) {
-                    let r = creep.repair(structure);
-
-                    if r == ReturnCode::Ok {
-                        info!(
-                            "repair my_structure!!:{:?},{:?},{:?}",
-                            structure.structure_type(),
-                            structure.pos().x(),
-                            structure.pos().y()
-                        );
-                        return;
-                    }
-
-                    if r == ReturnCode::NotInRange {
-                        is_skip_repair = true;
-                    }
-                }
-            }
-        }
-    }
-
-    // Wall含め 10k.
-    if is_skip_repair == false {
-        for structure in structures.iter() {
-            if structure.structure_type() == StructureType::Wall {
-                if check_repairable_hp(structure, 10000) {
-                    let r = creep.repair(structure);
-
-                    if r == ReturnCode::Ok {
-                        info!(
-                            "repair my_structure!!:{:?},{:?},{:?}",
-                            structure.structure_type(),
-                            structure.pos().x(),
-                            structure.pos().y()
-                        );
-                        return;
-                    }
-
-                    if r == ReturnCode::NotInRange {
-                        is_skip_repair = true;
-                    }
-                }
-            }
-        }
-    }
-
-    // のこり.
-    if is_skip_repair == false {
-        let stats = get_repairable_hp_average_wall(room_name);
-        let threshold = (stats.0 + stats.1) / 2;
-
-        for structure in structures.iter() {
-            if structure.structure_type() == StructureType::Wall {
-                let repair_hp = get_repairable_hp(structure);
-
-                match repair_hp {
-                    Some(hp) => {
-                        if hp >= (threshold - 1) as u32 {
-                            let r = creep.repair(structure);
-
-                            if r == ReturnCode::Ok {
-                                info!(
-                                    "repair my_structure!!:{:?},{:?},{:?}",
-                                    structure.structure_type(),
-                                    structure.pos().x(),
-                                    structure.pos().y()
-                                );
-                                return;
-                            }
-
-                            if r == ReturnCode::NotInRange {
-                                is_skip_repair = true;
-                            }
-                        }
-                    }
-                    None => {}
-                }
-            }
-        }
-    }
-
     //----------------------------------------
-    // Wall以外でまず確認.
+    // 残り時間が少ない物を優先.
     let res = find_nearest_repairable_item_except_wall_dying(&creep, REPAIRER_DYING_THRESHOLD);
 
     if res.load_local_path().len() > 0 {
@@ -193,55 +107,17 @@ pub fn run_repairer(creep: &Creep) {
         return;
     }
 
-    let stats = get_hp_average_exceptwall(room_name);
+    // 残りhpが少ない物を優先.
+    let stats = get_hp_average(room_name);
     let threshold = (stats.0 + stats.1) / 2;
 
-    let res = find_nearest_repairable_item_except_wall_hp(&creep, (threshold + 1) as u32);
+    let res = find_nearest_repairable_item_hp(&creep, (threshold + 1) as u32);
 
     if res.load_local_path().len() > 0 {
         let res = creep.move_by_path_search_result(&res);
         if res != ReturnCode::Ok {
             info!("couldn't move to repair: {:?}", res);
         }
-        return;
-    }
-
-    // Wall含め 1k.
-    let res = find_nearest_repairable_item_onlywall_hp(&creep, 5000);
-
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to repair: {:?}", res);
-        }
-
-        return;
-    }
-
-    // Wall含め 1m.
-    let res = find_nearest_repairable_item_onlywall_hp(&creep, 10000);
-
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to repair: {:?}", res);
-        }
-
-        return;
-    }
-
-    // Wall含め.
-    let stats = get_repairable_hp_average_wall(room_name);
-    let threshold = (stats.0 + stats.1) / 2;
-
-    let res = find_nearest_repairable_item_onlywall_repair_hp(&creep, (threshold - 1) as u32);
-
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to repair: {:?}", res);
-        }
-
         return;
     }
 

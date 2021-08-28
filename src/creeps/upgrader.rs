@@ -29,7 +29,11 @@ pub fn run_upgrader(creep: &Creep) {
                 }
             }
         } else if r != ReturnCode::Ok {
-            warn!("couldn't upgrade: {:?}", r);
+            warn!(
+                "couldn't upgrade: {:?},{:?}",
+                r,
+                creep.store_used_capacity(None)
+            );
         }
     } else {
         let res = find_nearest_room_controler(&creep);

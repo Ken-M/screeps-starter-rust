@@ -22,12 +22,10 @@ const ROOM_SIZE_Y: u8 = 50;
 type Data = HashMap<RoomName, LocalCostMatrix>;
 
 type ConstructionProgressAverage = HashMap<RoomName, u128>;
-type RepairableHpAverage_Wall = HashMap<RoomName, u128>;
-type StructureHpAverage_ExceptWall = HashMap<RoomName, u128>;
+type StructureHpAverage = HashMap<RoomName, u128>;
 
 type ConstructionProgressMin = HashMap<RoomName, u128>;
-type RepairableHpMax_Wall = HashMap<RoomName, u128>;
-type StructureHpMin_ExceptWall = HashMap<RoomName, u128>;
+type StructureHpMin = HashMap<RoomName, u128>;
 
 type RoomHashSet = HashSet<RoomName>;
 
@@ -39,16 +37,10 @@ lazy_static! {
     static ref MAP_CACHE: RwLock<Data> = RwLock::new(HashMap::new());
     static ref CONSTRUCTION_PROGRESS_AVERAGE_CACHE: RwLock<ConstructionProgressAverage> =
         RwLock::new(HashMap::new());
-    static ref REPAIRABLE_HP_AVERAGE_WALL_CACHE: RwLock<RepairableHpAverage_Wall> =
-        RwLock::new(HashMap::new());
-    static ref STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE: RwLock<StructureHpAverage_ExceptWall> =
-        RwLock::new(HashMap::new());
+    static ref STRUCTURE_HP_AVERAGE_CACHE: RwLock<StructureHpAverage> = RwLock::new(HashMap::new());
     static ref CONSTRUCTION_PROGRESS_MIN_CACHE: RwLock<ConstructionProgressMin> =
         RwLock::new(HashMap::new());
-    static ref REPAIRABLE_HP_MAX_WALL_CACHE: RwLock<RepairableHpMax_Wall> =
-        RwLock::new(HashMap::new());
-    static ref STRUCTURE_HP_MIN_EXCEPTWALL_CACHE: RwLock<StructureHpMin_ExceptWall> =
-        RwLock::new(HashMap::new());
+    static ref STRUCTURE_HP_MIN_CACHE: RwLock<StructureHpMin> = RwLock::new(HashMap::new());
 }
 
 pub fn clear_init_flag() {
@@ -58,21 +50,14 @@ pub fn clear_init_flag() {
     let mut construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.write().unwrap();
     construction_progress_average.clear();
 
-    let mut repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.write().unwrap();
-    repairable_hp_average_wall.clear();
-
-    let mut structure_hp_average_exceptwall =
-        STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.write().unwrap();
-    structure_hp_average_exceptwall.clear();
+    let mut structure_hp_average = STRUCTURE_HP_AVERAGE_CACHE.write().unwrap();
+    structure_hp_average.clear();
 
     let mut construction_progress_min = CONSTRUCTION_PROGRESS_MIN_CACHE.write().unwrap();
     construction_progress_min.clear();
 
-    let mut repairable_hp_max_wall = REPAIRABLE_HP_MAX_WALL_CACHE.write().unwrap();
-    repairable_hp_max_wall.clear();
-
-    let mut structure_hp_min_exceptwall = STRUCTURE_HP_MIN_EXCEPTWALL_CACHE.write().unwrap();
-    structure_hp_min_exceptwall.clear();
+    let mut structure_hp_min = STRUCTURE_HP_MIN_CACHE.write().unwrap();
+    structure_hp_min.clear();
 }
 
 #[derive(PartialEq, Debug)]
@@ -85,13 +70,10 @@ pub enum ResourceKind {
 
 pub fn calc_average(room_name: &RoomName) {
     let mut construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.write().unwrap();
-    let mut repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.write().unwrap();
-    let mut structure_hp_average_exceptwall =
-        STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.write().unwrap();
+    let mut structure_hp_average = STRUCTURE_HP_AVERAGE_CACHE.write().unwrap();
 
     let mut construction_progress_min = CONSTRUCTION_PROGRESS_MIN_CACHE.write().unwrap();
-    let mut repairable_hp_max_wall = REPAIRABLE_HP_MAX_WALL_CACHE.write().unwrap();
-    let mut structure_hp_min_exceptwall = STRUCTURE_HP_MIN_EXCEPTWALL_CACHE.write().unwrap();
+    let mut structure_hp_min = STRUCTURE_HP_MIN_CACHE.write().unwrap();
 
     let room = screeps::game::rooms::get(*room_name);
 
@@ -100,44 +82,24 @@ pub fn calc_average(room_name: &RoomName) {
             let structures = room_obj.find(find::STRUCTURES);
             let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES);
 
-            let mut total_repair_hp: u128 = 0;
             let mut total_hp: u128 = 0;
-
-            let mut repair_hp_max: u128 = 0;
             let mut hp_min: u128 = 0;
 
-            let mut struct_count_wall: u128 = 0;
-            let mut struct_count_except_wall: u128 = 0;
+            let mut struct_count: u128 = 0;
 
             for chk_struct in structures {
-                if chk_struct.structure_type() == StructureType::Wall {
-                    let repair_hp = get_repairable_hp(&chk_struct);
+                let cur_hp = get_hp(&chk_struct);
 
-                    match repair_hp {
-                        Some(hp) => {
-                            struct_count_wall += 1 as u128;
-                            total_repair_hp += hp as u128;
+                match cur_hp {
+                    Some(hp) => {
+                        struct_count += 1 as u128;
+                        total_hp += hp as u128;
 
-                            if (repair_hp_max < hp as u128) || (repair_hp_max == 0) {
-                                repair_hp_max = hp as u128;
-                            }
+                        if (hp_min > hp as u128) || (hp_min == 0) {
+                            hp_min = hp as u128;
                         }
-                        None => {}
                     }
-                } else {
-                    let cur_hp = get_hp_rate(&chk_struct);
-
-                    match cur_hp {
-                        Some(hp) => {
-                            struct_count_except_wall += 1 as u128;
-                            total_hp += hp as u128;
-
-                            if (hp_min > hp as u128) || (hp_min == 0) {
-                                hp_min = hp as u128;
-                            }
-                        }
-                        None => {}
-                    }
+                    None => {}
                 }
             }
 
@@ -156,34 +118,19 @@ pub fn calc_average(room_name: &RoomName) {
                 }
             }
 
-            if struct_count_wall > 0 {
-                repairable_hp_average_wall.insert(*room_name, total_repair_hp / struct_count_wall);
-                repairable_hp_max_wall.insert(*room_name, repair_hp_max);
-                info!(
-                    "{:?}: repairable_hp_average_wall:{:?}/max:{:?}",
-                    room_name,
-                    total_repair_hp / struct_count_wall,
-                    repair_hp_max
-                );
-            } else {
-                repairable_hp_average_wall.insert(*room_name, 0);
-                repairable_hp_max_wall.insert(*room_name, 0);
-            }
+            if struct_count > 0 {
+                structure_hp_average.insert(*room_name, total_hp / struct_count);
 
-            if struct_count_except_wall > 0 {
-                structure_hp_average_exceptwall
-                    .insert(*room_name, total_hp / struct_count_except_wall);
-
-                structure_hp_min_exceptwall.insert(*room_name, hp_min);
+                structure_hp_min.insert(*room_name, hp_min);
                 info!(
                     "{:?}: structure_hp_average_exceptwall:{:?}/min:{:?}",
                     room_name,
-                    total_hp / struct_count_except_wall,
+                    total_hp / struct_count,
                     hp_min
                 );
             } else {
-                structure_hp_average_exceptwall.insert(*room_name, 0);
-                structure_hp_min_exceptwall.insert(*room_name, 0);
+                structure_hp_average.insert(*room_name, 0);
+                structure_hp_min.insert(*room_name, 0);
             }
 
             if construction_count > 0 {
@@ -206,65 +153,13 @@ pub fn calc_average(room_name: &RoomName) {
     }
 }
 
-pub fn get_repairable_hp_average_wall(room_name: &RoomName) -> (u128, u128) {
+pub fn get_hp_average(room_name: &RoomName) -> (u128, u128) {
     {
-        let repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.read().unwrap();
-        let cache_value = repairable_hp_average_wall.get(&room_name);
+        let structure_hp_average = STRUCTURE_HP_AVERAGE_CACHE.read().unwrap();
+        let cache_value = structure_hp_average.get(&room_name);
 
-        let repairable_hp_max_wall = REPAIRABLE_HP_MAX_WALL_CACHE.read().unwrap();
-        let cache_value_max = repairable_hp_max_wall.get(&room_name);
-
-        match cache_value {
-            Some(value) => {
-                // use cached value.
-
-                match cache_value_max {
-                    Some(value_max) => {
-                        return (*value, *value_max);
-                    }
-
-                    None => {}
-                }
-            }
-            None => {}
-        }
-    }
-
-    calc_average(room_name);
-
-    {
-        let repairable_hp_average_wall = REPAIRABLE_HP_AVERAGE_WALL_CACHE.read().unwrap();
-        let cache_value = repairable_hp_average_wall.get(&room_name);
-
-        let repairable_hp_max_wall = REPAIRABLE_HP_MAX_WALL_CACHE.read().unwrap();
-        let cache_value_max = repairable_hp_max_wall.get(&room_name);
-
-        match cache_value {
-            Some(value) => {
-                // use cached value.
-
-                match cache_value_max {
-                    Some(value_max) => {
-                        return (*value, *value_max);
-                    }
-
-                    None => {}
-                }
-            }
-            None => {}
-        }
-    }
-
-    return (0, 0);
-}
-
-pub fn get_hp_average_exceptwall(room_name: &RoomName) -> (u128, u128) {
-    {
-        let structure_hp_average_exceptwall = STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.read().unwrap();
-        let cache_value = structure_hp_average_exceptwall.get(&room_name);
-
-        let structure_hp_min_exceptwall = STRUCTURE_HP_MIN_EXCEPTWALL_CACHE.read().unwrap();
-        let cache_value_min = structure_hp_min_exceptwall.get(&room_name);
+        let structure_hp_min = STRUCTURE_HP_MIN_CACHE.read().unwrap();
+        let cache_value_min = structure_hp_min.get(&room_name);
 
         match cache_value {
             Some(value) => {
@@ -285,11 +180,11 @@ pub fn get_hp_average_exceptwall(room_name: &RoomName) -> (u128, u128) {
     calc_average(room_name);
 
     {
-        let structure_hp_average_exceptwall = STRUCTURE_HP_AVERAGE_EXCEPTWALL_CACHE.read().unwrap();
-        let cache_value = structure_hp_average_exceptwall.get(&room_name);
+        let structure_hp_average = STRUCTURE_HP_AVERAGE_CACHE.read().unwrap();
+        let cache_value = structure_hp_average.get(&room_name);
 
-        let structure_hp_min_exceptwall = STRUCTURE_HP_MIN_EXCEPTWALL_CACHE.read().unwrap();
-        let cache_value_min = structure_hp_min_exceptwall.get(&room_name);
+        let structure_hp_min = STRUCTURE_HP_MIN_CACHE.read().unwrap();
+        let cache_value_min = structure_hp_min.get(&room_name);
 
         match cache_value {
             Some(value) => {
@@ -785,7 +680,7 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
     return None;
 }
 
-pub fn get_hp_rate(structure: &screeps::objects::Structure) -> Option<u32> {
+pub fn get_hp(structure: &screeps::objects::Structure) -> Option<u32> {
     match structure.as_owned() {
         Some(my_structure) => {
             if my_structure.my() == false {
@@ -795,10 +690,7 @@ pub fn get_hp_rate(structure: &screeps::objects::Structure) -> Option<u32> {
             match structure.as_attackable() {
                 Some(attackable) => {
                     if (attackable.hits() > 0) && (attackable.hits() < attackable.hits_max()) {
-                        return Some(
-                            ((attackable.hits() as u128 * 10000) / attackable.hits_max() as u128)
-                                as u32,
-                        );
+                        return Some((attackable.hits()) as u32);
                     } else {
                         return None;
                     }
@@ -814,10 +706,7 @@ pub fn get_hp_rate(structure: &screeps::objects::Structure) -> Option<u32> {
             match structure.as_attackable() {
                 Some(attackable) => {
                     if (attackable.hits() > 0) && (attackable.hits() < attackable.hits_max()) {
-                        return Some(
-                            ((attackable.hits() as u128 * 10000) / attackable.hits_max() as u128)
-                                as u32,
-                        );
+                        return Some((attackable.hits()) as u32);
                     } else {
                         return None;
                     }
@@ -1139,89 +1028,7 @@ pub fn find_nearest_transfarable_terminal(
     return search_many(creep, find_item_list, option);
 }
 
-pub fn find_nearest_repairable_item_onlywall_repair_hp(
-    creep: &screeps::objects::Creep,
-    threshold: u32,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
-
-    for chk_item in item_list {
-        if chk_item.structure_type() == StructureType::Wall {
-            let repair_hp = get_repairable_hp(chk_item);
-            match repair_hp {
-                Some(hp) => {
-                    if hp >= threshold {
-                        find_item_list.push((chk_item.clone(), 3));
-                    }
-                }
-
-                None => {}
-            }
-        }
-    }
-
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option);
-}
-
-pub fn find_nearest_repairable_item_onlywall_hp(
-    creep: &screeps::objects::Creep,
-    threshold: u32,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
-
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
-
-    for chk_item in item_list {
-        if chk_item.structure_type() == StructureType::Wall {
-            if check_repairable_hp(chk_item, threshold) {
-                find_item_list.push((chk_item.clone(), 3));
-            }
-        }
-    }
-
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
-
-    return search_many(creep, find_item_list, option);
-}
-
-pub fn find_nearest_repairable_item_except_wall_hp(
+pub fn find_nearest_repairable_item_hp(
     creep: &screeps::objects::Creep,
     threshold: u32,
 ) -> screeps::pathfinder::SearchResults {
@@ -1246,7 +1053,7 @@ pub fn find_nearest_repairable_item_except_wall_hp(
     for chk_item in item_list {
         if chk_item.structure_type() != StructureType::Wall {
             if check_repairable(chk_item) {
-                if get_hp_rate(chk_item).unwrap_or(0) <= threshold {
+                if get_hp(chk_item).unwrap_or(0) <= threshold {
                     find_item_list.push((chk_item.clone(), 3));
                 }
             }

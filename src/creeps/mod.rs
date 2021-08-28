@@ -40,6 +40,7 @@ fn reset_source_target(
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", 20);
             creep.memory().set("will_harvest_from_storage", false);
+            creep.memory().del("nothing_to_harvest");
 
             debug!(
                 "harvesting : target_pos:{:?}",
@@ -60,6 +61,7 @@ fn reset_source_target(
                 creep.memory().set("target_pos", json_str);
                 creep.memory().set("target_pos_count", 10);
                 creep.memory().set("will_harvest_from_storage", true);
+                creep.memory().del("nothing_to_harvest");
 
                 debug!(
                     "harvesting : target_pos:{:?}",
@@ -80,6 +82,7 @@ fn reset_source_target(
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", 20);
             creep.memory().set("will_harvest_from_storage", true);
+            creep.memory().del("nothing_to_harvest");
 
             debug!(
                 "harvesting : target_pos:{:?}",
@@ -103,6 +106,7 @@ fn reset_source_target(
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", 10);
             creep.memory().set("will_harvest_from_storage", false);
+            creep.memory().del("nothing_to_harvest");
 
             debug!(
                 "harvesting : target_pos:{:?}",
@@ -123,6 +127,7 @@ fn reset_source_target(
         creep.memory().set("target_pos", json_str);
         creep.memory().set("target_pos_count", 5);
         creep.memory().set("will_harvest_from_storage", true);
+        creep.memory().del("nothing_to_harvest");
 
         debug!(
             "harvesting : target_pos:{:?}",
@@ -372,6 +377,10 @@ pub fn creep_loop() {
                     harvest_kind = ResourceKind::MINELALS;
                     role_string = String::from("carrier_mineral");
                     is_harvester = false;
+                } else {
+                    creep.memory().set("role", "repairer");
+                    num_repairer += 1;
+                    role_string = String::from("repairer");
                 }
             }
 
@@ -411,7 +420,9 @@ pub fn creep_loop() {
         }
 
         if creep.memory().bool("harvesting") {
-            if (creep.store_free_capacity(None) == 0) || (creep.memory().bool("nothing_to_harvest"))
+            if (creep.store_free_capacity(None) == 0)
+                || ((creep.memory().bool("nothing_to_harvest"))
+                    && (creep.store_used_capacity(None) > 0))
             {
                 creep.memory().set("harvesting", false);
                 creep.memory().del("target_pos");

@@ -26,7 +26,7 @@ pub fn run_market() {
     let mut my_buy_orders = 0;
 
     for my_order in game::market::orders().values() {
-        info!("my order:{:?}", my_order);
+        debug!("my order:{:?}", my_order);
 
         if my_order.remaining_amount <= 0 {
             game::market::cancel_order(my_order.id.as_str());
@@ -48,7 +48,7 @@ pub fn run_market() {
         }
     }
 
-    if market_count % 50 == 0 {
+    if market_count % 100 == 0 {
         for room in game::rooms::values() {
             if let Some(my_terminal) = room.terminal() {
                 //sell orders.
@@ -138,7 +138,7 @@ pub fn run_market() {
                             }
                         }
 
-                        if found_count < 3 {
+                        if found_count < 1 {
                             let amount =
                                 (((cur_credits as f64 * 0.5) / 0.05) / target_price_own) as u32;
                             let amount = std::cmp::min(amount, stored_amount / 2);
@@ -162,7 +162,7 @@ pub fn run_market() {
                 }
             }
         }
-    } else if market_count % 50 == 25 {
+    } else if market_count % 100 == 50 {
         for room in game::rooms::values() {
             if let Some(my_terminal) = room.terminal() {
                 //buy energy orders.

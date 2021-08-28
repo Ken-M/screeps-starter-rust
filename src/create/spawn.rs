@@ -9,7 +9,7 @@ use screeps::{
     RoomObjectProperties, StructureType,
 };
 
-const MAX_NUM_OF_CREEPS: u32 = 14;
+const MAX_NUM_OF_CREEPS: u32 = 16;
 
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= MAX_NUM_OF_CREEPS as usize {
@@ -71,19 +71,17 @@ pub fn do_spawn() {
         {
             info!("got attacked!!");
 
-            let all_structures = spawn
+            let my_controller = spawn
                 .room()
                 .expect("room is not visible to you")
-                .find(STRUCTURES);
+                .controller();
 
-            for structure in all_structures {
-                match structure {
-                    Structure::Controller(controller) => {
-                        controller.activate_safe_mode();
-                    }
-                    _ => {
-                        //nothint to do.
-                    }
+            match my_controller {
+                Some(controller) => {
+                    controller.activate_safe_mode();
+                }
+                None => {
+                    //nothint to do.
                 }
             }
         }
@@ -159,15 +157,19 @@ pub fn do_spawn() {
                 {
                     count += 1;
                     if count % 3 == 0 {
-                        body.extend(body_unit.iter().cloned());
-                        sum_energy -= body_cost;
+                        if sum_energy >= body_cost {
+                            body.extend(body_unit.iter().cloned());
+                            sum_energy -= body_cost;
+                        }
                     } else {
                         body.extend(body_long_atk_unit.iter().cloned());
                         sum_energy -= body_long_atk_cost;
                     }
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3) {
+                if ((opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3))
+                    && (extention_cap > (body_long_atk_cost + body_cost))
+                {
                     continue;
                 }
             }
@@ -184,15 +186,19 @@ pub fn do_spawn() {
                     count += 1;
 
                     if count % 3 == 0 {
-                        body.extend(body_unit.iter().cloned());
-                        sum_energy -= body_cost;
+                        if sum_energy >= body_cost {
+                            body.extend(body_unit.iter().cloned());
+                            sum_energy -= body_cost;
+                        }
                     } else {
                         body.extend(body_short_atk_unit.iter().cloned());
                         sum_energy -= body_short_atk_cost;
                     }
                 }
             } else {
-                if (opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3) {
+                if ((opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3))
+                    && (extention_cap > (body_short_atk_cost + body_cost))
+                {
                     continue;
                 }
             }
