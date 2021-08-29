@@ -1,3 +1,4 @@
+use crate::constants::*;
 use crate::util::*;
 use log::*;
 use screeps::constants::find::*;
@@ -73,7 +74,9 @@ pub fn run_tower() {
                         for structure in my_structures.iter() {
                             if structure.structure_type() != StructureType::Wall {
                                 if check_repairable(structure) {
-                                    if get_live_tickcount(structure).unwrap_or(10000) <= 1000 {
+                                    if get_live_tickcount(structure).unwrap_or(10000)
+                                        <= REPAIRER_DYING_THRESHOLD
+                                    {
                                         let r = my_tower.repair(structure);
                                         if r == ReturnCode::Ok {
                                             info!("repair my structure!!");
@@ -90,18 +93,16 @@ pub fn run_tower() {
 
                         // HPが低い物を確認.
                         let stats = get_hp_average(&room_name);
-                        let threshold = stats.1 + (stats.0 - stats.1)/1000 ;
+                        let threshold = stats.1 + (stats.0 - stats.1) / 1000;
 
                         for structure in my_structures.iter() {
-                            if structure.structure_type() != StructureType::Wall {
-                                if check_repairable(structure) {
-                                    if get_hp(structure).unwrap_or(0) <= (threshold + 1) as u32 {
-                                        let r = my_tower.repair(structure);
-                                        if r == ReturnCode::Ok {
-                                            info!("repair my structure!!");
-                                            is_done = true;
-                                            break;
-                                        }
+                            if check_repairable(structure) {
+                                if get_hp(structure).unwrap_or(0) <= (threshold + 1) as u32 {
+                                    let r = my_tower.repair(structure);
+                                    if r == ReturnCode::Ok {
+                                        info!("repair my structure!!");
+                                        is_done = true;
+                                        break;
                                     }
                                 }
                             }

@@ -588,17 +588,24 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                         Structure::Road(_road) => match this_terrain {
                             Terrain::Plain => {
                                 return Some(
-                                    ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 100),
+                                    ROAD_DECAY_TIME as u128
+                                        * (attackable.hits() as u128 / ROAD_DECAY_AMOUNT as u128),
                                 );
                             }
                             Terrain::Swamp => {
                                 return Some(
-                                    ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 500),
+                                    ROAD_DECAY_TIME as u128
+                                        * (attackable.hits() as u128
+                                            / (ROAD_DECAY_AMOUNT as u128
+                                                * CONSTRUCTION_COST_ROAD_SWAMP_RATIO as u128)),
                                 );
                             }
                             Terrain::Wall => {
                                 return Some(
-                                    ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 1500),
+                                    ROAD_DECAY_TIME as u128
+                                        * (attackable.hits() as u128
+                                            / (ROAD_DECAY_AMOUNT as u128
+                                                * CONSTRUCTION_COST_ROAD_WALL_RATIO as u128)),
                                 );
                             }
                         },
@@ -638,17 +645,24 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                         Structure::Road(_road) => match this_terrain {
                             Terrain::Plain => {
                                 return Some(
-                                    ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 100),
+                                    ROAD_DECAY_TIME as u128
+                                        * (attackable.hits() as u128 / ROAD_DECAY_AMOUNT as u128),
                                 );
                             }
                             Terrain::Swamp => {
                                 return Some(
-                                    ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 500),
+                                    ROAD_DECAY_TIME as u128
+                                        * (attackable.hits() as u128
+                                            / (ROAD_DECAY_AMOUNT as u128
+                                                * CONSTRUCTION_COST_ROAD_SWAMP_RATIO as u128)),
                                 );
                             }
                             Terrain::Wall => {
                                 return Some(
-                                    ROAD_DECAY_TIME as u128 * (attackable.hits() as u128 / 1500),
+                                    ROAD_DECAY_TIME as u128
+                                        * (attackable.hits() as u128
+                                            / (ROAD_DECAY_AMOUNT as u128
+                                                * CONSTRUCTION_COST_ROAD_WALL_RATIO as u128)),
                                 );
                             }
                         },
@@ -1051,11 +1065,9 @@ pub fn find_nearest_repairable_item_hp(
     let mut find_item_list = Vec::<(Structure, u32)>::new();
 
     for chk_item in item_list {
-        if chk_item.structure_type() != StructureType::Wall {
-            if check_repairable(chk_item) {
-                if get_hp(chk_item).unwrap_or(0) <= threshold {
-                    find_item_list.push((chk_item.clone(), 3));
-                }
+        if check_repairable(chk_item) {
+            if get_hp(chk_item).unwrap_or(0) <= threshold {
+                find_item_list.push((chk_item.clone(), 3));
             }
         }
     }

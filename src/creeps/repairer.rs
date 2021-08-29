@@ -68,27 +68,25 @@ pub fn run_repairer(creep: &Creep) {
     // 残りhpが少ない物を優先.
     if is_skip_repair == false {
         let stats = get_hp_average(room_name);
-        let threshold = stats.1 + (stats.0 - stats.1)/1000 ;
+        let threshold = stats.1 + (stats.0 - stats.1) / 1000;
 
         for structure in structures.iter() {
-            if structure.structure_type() != StructureType::Wall {
-                if check_repairable(structure) {
-                    if get_hp(structure).unwrap_or(0) as u128 <= (threshold + 1) {
-                        let r = creep.repair(structure);
+            if check_repairable(structure) {
+                if get_hp(structure).unwrap_or(0) as u128 <= (threshold + 1) {
+                    let r = creep.repair(structure);
 
-                        if r == ReturnCode::Ok {
-                            info!(
-                                "repair my_structure!!:{:?},{:?},{:?}",
-                                structure.structure_type(),
-                                structure.pos().x(),
-                                structure.pos().y()
-                            );
-                            return;
-                        }
+                    if r == ReturnCode::Ok {
+                        info!(
+                            "repair my_structure!!:{:?},{:?},{:?}",
+                            structure.structure_type(),
+                            structure.pos().x(),
+                            structure.pos().y()
+                        );
+                        return;
+                    }
 
-                        if r == ReturnCode::NotInRange {
-                            is_skip_repair = true;
-                        }
+                    if r == ReturnCode::NotInRange {
+                        is_skip_repair = true;
                     }
                 }
             }
@@ -109,7 +107,7 @@ pub fn run_repairer(creep: &Creep) {
 
     // 残りhpが少ない物を優先.
     let stats = get_hp_average(room_name);
-    let threshold = stats.1 + (stats.0 - stats.1)/1000 ;
+    let threshold = stats.1 + (stats.0 - stats.1) / 1000;
 
     let res = find_nearest_repairable_item_hp(&creep, (threshold + 1) as u32);
 
