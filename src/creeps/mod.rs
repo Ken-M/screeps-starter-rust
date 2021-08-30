@@ -371,7 +371,7 @@ pub fn creep_loop() {
                     role_string = String::from("harvester");
                     is_harvester = true;
                     cap_worker_carry += creep.store_capacity(None) as u128;
-                } else if let Some(my_terminal) = creep.room().expect("I can't see").terminal() {
+                } else if let Some(_my_terminal) = creep.room().expect("I can't see").terminal() {
                     if num_carrier_mineral <= 0 {
                         creep.memory().set("role", "carrier_mineral");
                         num_carrier_mineral += 1;
