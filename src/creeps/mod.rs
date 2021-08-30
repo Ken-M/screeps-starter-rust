@@ -371,12 +371,18 @@ pub fn creep_loop() {
                     role_string = String::from("harvester");
                     is_harvester = true;
                     cap_worker_carry += creep.store_capacity(None) as u128;
-                } else if num_carrier_mineral <= 0 {
-                    creep.memory().set("role", "carrier_mineral");
-                    num_carrier_mineral += 1;
-                    harvest_kind = ResourceKind::MINELALS;
-                    role_string = String::from("carrier_mineral");
-                    is_harvester = false;
+                } else if let Some(my_terminal) = creep.room().expect("I can't see").terminal() {
+                    if num_carrier_mineral <= 0 {
+                        creep.memory().set("role", "carrier_mineral");
+                        num_carrier_mineral += 1;
+                        harvest_kind = ResourceKind::MINELALS;
+                        role_string = String::from("carrier_mineral");
+                        is_harvester = false;
+                    } else {
+                        creep.memory().set("role", "repairer");
+                        num_repairer += 1;
+                        role_string = String::from("repairer");
+                    }
                 } else {
                     creep.memory().set("role", "repairer");
                     num_repairer += 1;
