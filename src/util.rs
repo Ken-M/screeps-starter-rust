@@ -1848,7 +1848,9 @@ pub fn find_nearest_room_controler(
 
     for chk_item in item_list.iter() {
         if chk_item.structure_type() == StructureType::Controller {
-            find_item_list.push((chk_item.clone(), 3));
+            if check_my_structure(chk_item) == true {
+                find_item_list.push((chk_item.clone(), 3));
+            }
         }
     }
 

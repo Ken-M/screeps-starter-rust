@@ -9,7 +9,7 @@ use screeps::{
     RoomObjectProperties, StructureType,
 };
 
-const MAX_NUM_OF_CREEPS: u32 = 16;
+const MAX_NUM_OF_CREEPS: u32 = 14;
 
 pub fn do_spawn() {
     if screeps::game::creeps::values().len() >= MAX_NUM_OF_CREEPS as usize {

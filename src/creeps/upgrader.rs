@@ -17,35 +17,41 @@ pub fn run_upgrader(creep: &Creep) {
         .expect("room is not visible to you")
         .controller()
     {
-        let r = creep.upgrade_controller(&c);
+        if c.my() == true {
+            let r = creep.upgrade_controller(&c);
 
-        if r == ReturnCode::NotInRange {
-            let res = find_path(&creep, &c.pos(), 3);
+            if r == ReturnCode::NotInRange {
+                let res = find_path(&creep, &c.pos(), 3);
 
-            if res.load_local_path().len() > 0 {
-                let res = creep.move_by_path_search_result(&res);
-                if res != ReturnCode::Ok {
-                    info!("couldn't move to upgrade: {:?}", res);
+                if res.load_local_path().len() > 0 {
+                    let res = creep.move_by_path_search_result(&res);
+                    if res != ReturnCode::Ok {
+                        info!("couldn't move to upgrade: {:?}", res);
+                    } else {
+                        return;
+                    }
                 }
+            } else if r != ReturnCode::Ok {
+                warn!(
+                    "couldn't upgrade: {:?},{:?}",
+                    r,
+                    creep.store_used_capacity(None)
+                );
+            } else {
+                return;
             }
-        } else if r != ReturnCode::Ok {
-            warn!(
-                "couldn't upgrade: {:?},{:?}",
-                r,
-                creep.store_used_capacity(None)
-            );
         }
-    } else {
-        let res = find_nearest_room_controler(&creep);
-        debug!("go to:{:?}", res.load_local_path());
+    }
 
-        if res.load_local_path().len() > 0 {
-            let res = creep.move_by_path_search_result(&res);
-            if res != ReturnCode::Ok {
-                info!("couldn't move to build: {:?}", res);
-            }
+    let res = find_nearest_room_controler(&creep);
+    debug!("go to:{:?}", res.load_local_path());
 
-            return;
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res);
+        if res != ReturnCode::Ok {
+            info!("couldn't move to build: {:?}", res);
         }
+
+        return;
     }
 }
