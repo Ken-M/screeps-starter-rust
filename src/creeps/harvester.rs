@@ -422,6 +422,12 @@ pub fn run_harvester_mineral(creep: &Creep) {
             continue;
         }
 
+        if structure.structure_type() == StructureType::Lab {
+            //Labには常にtransferしない.
+
+            continue;
+        }
+
         for resource_type in resrouce_type_list.iter() {
             if &creep.store_of(*resource_type) > &(0 as u32) {
                 if check_transferable(structure, &resource_type, None) {

@@ -1574,6 +1574,8 @@ pub fn find_nearest_stored_source(
                 || chk_item.structure_type() == StructureType::Link
                 || ((chk_item.structure_type() == StructureType::Terminal)
                     && (*resource_kind == ResourceKind::ENERGY))
+                || ((chk_item.structure_type() == StructureType::Lab)
+                    && (*resource_kind == ResourceKind::MINELALS))
             {
                 if check_my_structure(chk_item)
                     || (chk_item.structure_type() == StructureType::Container)
