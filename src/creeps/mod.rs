@@ -3,6 +3,7 @@ mod harvester;
 mod repairer;
 mod upgrader;
 
+use crate::constants::*;
 use crate::util::*;
 use log::*;
 use screeps::constants::find::*;
@@ -653,7 +654,7 @@ pub fn creep_loop() {
                 for structure in structures.iter() {
                     if creep.pos().is_near_to(structure) {
                         for resource_type in resource_type_list.iter() {
-                            if check_stored(structure, &resource_type) {
+                            if check_stored(structure, &resource_type, 0) {
                                 match structure {
                                     Structure::Container(container) => {
                                         let r = creep.withdraw_all(container, *resource_type);
@@ -679,14 +680,26 @@ pub fn creep_loop() {
 
                                     Structure::Terminal(terminal) => {
                                         if harvest_kind == ResourceKind::ENERGY {
-                                            let r = creep.withdraw_all(terminal, *resource_type);
-                                            if r != ReturnCode::Ok {
-                                                warn!("couldn't withdraw from terminal: {:?}", r);
+                                            if terminal.store_of(*resource_type)
+                                                > TERMINAL_KEEP_ENERGY
+                                            {
+                                                let r = creep.withdraw_amount(
+                                                    terminal,
+                                                    *resource_type,
+                                                    terminal.store_of(*resource_type)
+                                                        - TERMINAL_KEEP_ENERGY,
+                                                );
+                                                if r != ReturnCode::Ok {
+                                                    warn!(
+                                                        "couldn't withdraw from terminal: {:?}",
+                                                        r
+                                                    );
+                                                    break;
+                                                }
+                                                creep.memory().set("harvested_from_terminal", true);
+                                                is_harvested = true;
                                                 break;
                                             }
-                                            creep.memory().set("harvested_from_terminal", true);
-                                            is_harvested = true;
-                                            break;
                                         }
                                     }
 
@@ -699,6 +712,19 @@ pub fn creep_loop() {
                                         creep.memory().set("harvested_from_link", true);
                                         is_harvested = true;
                                         break;
+                                    }
+
+                                    Structure::Lab(lab) => {
+                                        if harvest_kind == ResourceKind::MINELALS {
+                                            let r = creep.withdraw_all(lab, *resource_type);
+                                            if r != ReturnCode::Ok {
+                                                warn!("couldn't withdraw from lab: {:?}", r);
+                                                break;
+                                            }
+                                            creep.memory().set("harvested_from_storage", true);
+                                            is_harvested = true;
+                                            break;
+                                        }
                                     }
 
                                     _ => {

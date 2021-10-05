@@ -1,3 +1,4 @@
+use crate::constants::*;
 use log::*;
 use screeps::constants::find::*;
 use screeps::constants::*;
@@ -775,10 +776,14 @@ pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) 
     }
     return false;
 }
-pub fn check_stored(structure: &screeps::objects::Structure, resource_type: &ResourceType) -> bool {
+pub fn check_stored(
+    structure: &screeps::objects::Structure,
+    resource_type: &ResourceType,
+    keep_amount: u32,
+) -> bool {
     match structure.as_has_store() {
         Some(storage) => {
-            if storage.store_of(*resource_type) > 0 {
+            if storage.store_of(*resource_type) > keep_amount {
                 return true;
             }
         }
@@ -1581,7 +1586,12 @@ pub fn find_nearest_stored_source(
                     || (chk_item.structure_type() == StructureType::Container)
                 {
                     for resource_type in resource_type_list.iter() {
-                        if check_stored(chk_item, resource_type) {
+                        let mut keep_amount = 0 as u32;
+                        if chk_item.structure_type() == StructureType::Terminal {
+                            keep_amount = TERMINAL_KEEP_ENERGY;
+                        }
+
+                        if check_stored(chk_item, resource_type, keep_amount) {
                             let mut object: Position = creep.pos();
                             object.set_x(chk_item.pos().x());
                             object.set_y(chk_item.pos().y());

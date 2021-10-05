@@ -1,3 +1,4 @@
+use crate::constants::*;
 use log::*;
 
 use screeps::{
@@ -81,7 +82,10 @@ pub fn run_market() {
 
                     for history in market_history {
                         target_price += history.avg_price + history.stddev_price;
-                        target_price_own += history.avg_price - history.stddev_price;
+                        target_price_own += f64::max(
+                            history.avg_price - f64::min(history.stddev_price, MARKET_CUT_VALUE),
+                            MARKET_MIN_PRICE,
+                        );
                         num_data += 1;
                     }
 
@@ -188,8 +192,9 @@ pub fn run_market() {
                 let mut num_data: u128 = 0;
 
                 for history in market_history {
-                    target_price += history.avg_price - history.stddev_price;
-                    target_price_own += history.avg_price + history.stddev_price;
+                    target_price += f64::max(history.avg_price - history.stddev_price, 0 as f64);
+                    target_price_own +=
+                        history.avg_price + f64::min(history.stddev_price, MARKET_CUT_VALUE);
                     num_data += 1;
                 }
 
