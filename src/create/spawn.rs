@@ -1,3 +1,4 @@
+use crate::constants::*;
 use std::usize;
 
 use log::*;
@@ -124,12 +125,13 @@ pub fn do_spawn() {
 
         debug!("spawn calc sum_energy:{:?}", sum_energy);
         let min_basic_body_set = std::cmp::min(
-            ((cap_worker_carry as f64) / (body_cost as f64)) as u32,
+            ((cap_worker_carry as f64 * CAP_WORKER_CARRY_COEFF) / (body_cost as f64)) as u32,
             ((extention_cap as f64) / (body_cost as f64)) as u32,
         );
 
         info!("min basic body set:{:?}", min_basic_body_set);
-        if (cap_worker_carry as f64 >= (body_cost as f64 * min_basic_body_set as f64))
+        if ((cap_worker_carry as f64 * CAP_WORKER_CARRY_COEFF)
+            >= (body_cost as f64 * min_basic_body_set as f64))
             && (extention_cap as f64 >= (body_cost as f64 * min_basic_body_set as f64))
         {
             if sum_energy < body_cost * min_basic_body_set {

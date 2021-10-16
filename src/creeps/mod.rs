@@ -686,8 +686,11 @@ pub fn creep_loop() {
                                                 let r = creep.withdraw_amount(
                                                     terminal,
                                                     *resource_type,
-                                                    terminal.store_of(*resource_type)
-                                                        - TERMINAL_KEEP_ENERGY,
+                                                    std::cmp::min(
+                                                        terminal.store_of(*resource_type)
+                                                            - TERMINAL_KEEP_ENERGY,
+                                                        creep.store_free_capacity(None) as u32,
+                                                    ),
                                                 );
                                                 if r != ReturnCode::Ok {
                                                     warn!(
