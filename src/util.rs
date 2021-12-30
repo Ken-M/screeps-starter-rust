@@ -5,6 +5,7 @@ use screeps::constants::*;
 use screeps::local::Position;
 use screeps::local::RoomName;
 use screeps::objects::{HasPosition, Resource};
+use screeps::SharedCreepProperties;
 use screeps::{
     game, pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
     RoomPosition, Source, Structure, StructureProperties,
@@ -306,13 +307,6 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                     }
                 }
 
-                // 自分のものかどうかを問わず、creepのいるマスも通行不可として扱う.
-                let creeps = room_obj.find(find::CREEPS);
-                // Avoid creeps in the room
-                for creep in creeps {
-                    cost_matrix.set(creep.pos().x() as u8, creep.pos().y() as u8, 0xff);
-                }
-
                 // ConstructionSiteの通行不可なものをマーク.
                 let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES);
                 for construction_site in construction_sites {
@@ -354,6 +348,131 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                                 {
                                     let new_cost = 11;
                                     cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost);
+                                } else if Position::new(
+                                    new_x_pos as u32,
+                                    new_y_pos as u32,
+                                    room_name,
+                                )
+                                .look_for(look::STRUCTURES)
+                                .iter()
+                                .filter(|&s| s.structure_type() == StructureType::Road)
+                                .collect::<Vec<_>>()
+                                .len()
+                                    > 0
+                                {
+                                    //Road かつ Wall.
+                                    cost_matrix.set(new_x_pos as u8, new_y_pos as u8, 2);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 自分のものかどうかを問わず、creepのいるマスも通行不可として扱う.
+                let creeps = room_obj.find(find::CREEPS);
+                // Avoid creeps in the room
+                for creep in creeps {
+                    cost_matrix.set(creep.pos().x() as u8, creep.pos().y() as u8, 0xff);
+
+                    // enemyの射程圏内は、Rampartが無い限りコストをあげる.
+                    if creep.my() == false {
+                        let mut enemy_range = 1;
+
+                        for body_part in creep.body() {
+                            if body_part.hits > 0 {
+                                match body_part.part {
+                                    Part::Attack => {
+                                        enemy_range = 1;
+                                    }
+
+                                    Part::RangedAttack => {
+                                        enemy_range = 3;
+                                    }
+
+                                    _ => {}
+                                }
+                            }
+                        }
+
+                        enemy_range = enemy_range * 2;
+
+                        for x_pos_offset in 0..=enemy_range {
+                            for y_pos_offset in 0..=enemy_range {
+                                let new_x_pos: i8 = min(
+                                    max(creep.pos().x() as i8 + x_pos_offset - enemy_range, 0),
+                                    ROOM_SIZE_X as i8 - 1,
+                                );
+                                let new_y_pos: i8 = min(
+                                    max(creep.pos().y() as i8 + y_pos_offset - enemy_range, 0),
+                                    ROOM_SIZE_Y as i8 - 1,
+                                );
+
+                                let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8);
+                                // すでに通行不可としてマークされているマスは触らない.
+                                if cur_cost < 0xff {
+                                    if room_obj
+                                        .get_terrain()
+                                        .get(new_x_pos as u32, new_y_pos as u32)
+                                        != Terrain::Wall
+                                    {
+                                        if Position::new(
+                                            new_x_pos as u32,
+                                            new_y_pos as u32,
+                                            room_name,
+                                        )
+                                        .look_for(look::STRUCTURES)
+                                        .iter()
+                                        .filter(|&s| {
+                                            s.structure_type() == StructureType::Rampart
+                                                && s.as_owned().map(|os| os.my()).unwrap_or(false)
+                                                    == true
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .len()
+                                            <= 0
+                                        {
+                                            cost_matrix.set(
+                                                new_x_pos as u8,
+                                                new_y_pos as u8,
+                                                cur_cost + 10,
+                                            );
+                                        }
+                                    } else if Position::new(
+                                        new_x_pos as u32,
+                                        new_y_pos as u32,
+                                        room_name,
+                                    )
+                                    .look_for(look::STRUCTURES)
+                                    .iter()
+                                    .filter(|&s| s.structure_type() == StructureType::Road)
+                                    .collect::<Vec<_>>()
+                                    .len()
+                                        > 0
+                                    {
+                                        //Road かつ Wall.
+                                        if Position::new(
+                                            new_x_pos as u32,
+                                            new_y_pos as u32,
+                                            room_name,
+                                        )
+                                        .look_for(look::STRUCTURES)
+                                        .iter()
+                                        .filter(|&s| {
+                                            s.structure_type() == StructureType::Rampart
+                                                && s.as_owned().map(|os| os.my()).unwrap_or(false)
+                                                    == true
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .len()
+                                            <= 0
+                                        {
+                                            cost_matrix.set(
+                                                new_x_pos as u8,
+                                                new_y_pos as u8,
+                                                cur_cost + 10,
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }

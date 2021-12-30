@@ -320,6 +320,15 @@ pub fn creep_loop() {
         }
     }
 
+    // if no harvester, clear role.
+    if (num_harvester + num_harvester_spawn <= 2)
+        && (screeps::game::creeps::values().len() > (num_harvester + num_harvester_spawn) as usize)
+    {
+        for creep in screeps::game::creeps::values() {
+            creep.memory().del("role");
+        }
+    }
+
     for creep in screeps::game::creeps::values() {
         let name = creep.name();
         info!(
