@@ -209,6 +209,76 @@ pub fn run_harvester_spawn(creep: &Creep) {
         }
     }
 
+    // tower
+    debug!("check towers {}", name);
+
+    let my_towers = &creep
+        .room()
+        .expect("room is not visible to you")
+        .find(STRUCTURES);
+
+    for my_tower in my_towers.iter() {
+        if my_tower.structure_type() == StructureType::Tower {
+            debug!("try transfer to tower {}", name);
+            match my_tower.as_owned() {
+                Some(my_structure) => {
+                    if my_structure.my() == true {
+                        match my_tower.as_transferable() {
+                            Some(transf) => {
+                                match my_tower.as_has_store() {
+                                    Some(has_store) => {
+                                        if has_store.store_free_capacity(Some(ResourceType::Energy))
+                                            > (has_store.store_capacity(Some(ResourceType::Energy))
+                                                as i32
+                                                / 2 as i32)
+                                        {
+                                            let r =
+                                                creep.transfer_all(transf, ResourceType::Energy);
+
+                                            if r == ReturnCode::Ok {
+                                                info!("transferd to tower!!");
+                                                return;
+                                            }
+                                        }
+                                    }
+
+                                    None => {
+                                        //no store.
+                                    }
+                                }
+                            }
+
+                            None => {
+                                // my_struct is not transferable
+                            }
+                        }
+                    }
+                }
+
+                None => {
+                    //not my structure.
+                }
+            }
+        }
+    }
+
+    //// move to tower.
+    let res = find_nearest_transferable_structure(
+        &creep,
+        &StructureType::Tower,
+        &ResourceType::Energy,
+        None,
+        Some(0.5),
+    );
+    debug!("go to:{:?}", res.load_local_path());
+
+    if res.load_local_path().len() > 0 {
+        let res = creep.move_by_path_search_result(&res);
+        if res == ReturnCode::Ok {
+            return;
+        }
+    }
+
     // extention.
     let my_structures = &creep
         .room()
@@ -272,77 +342,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
         if res == ReturnCode::Ok {
             return;
         }
-    }
-
-    // tower
-    debug!("check towers {}", name);
-
-    let my_towers = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(STRUCTURES);
-
-    for my_tower in my_towers.iter() {
-        if my_tower.structure_type() == StructureType::Tower {
-            debug!("try transfer to tower {}", name);
-            match my_tower.as_owned() {
-                Some(my_structure) => {
-                    if my_structure.my() == true {
-                        match my_tower.as_transferable() {
-                            Some(transf) => {
-                                match my_tower.as_has_store() {
-                                    Some(has_store) => {
-                                        if has_store.store_free_capacity(Some(ResourceType::Energy))
-                                            > (has_store.store_capacity(Some(ResourceType::Energy))
-                                                as i32
-                                                / 4 as i32)
-                                        {
-                                            let r =
-                                                creep.transfer_all(transf, ResourceType::Energy);
-
-                                            if r == ReturnCode::Ok {
-                                                info!("transferd to tower!!");
-                                                return;
-                                            }
-                                        }
-                                    }
-
-                                    None => {
-                                        //no store.
-                                    }
-                                }
-                            }
-
-                            None => {
-                                // my_struct is not transferable
-                            }
-                        }
-                    }
-                }
-
-                None => {
-                    //not my structure.
-                }
-            }
-        }
-    }
-
-    //// move to tower.
-    let res = find_nearest_transferable_structure(
-        &creep,
-        &StructureType::Tower,
-        &ResourceType::Energy,
-        None,
-        Some(0.25),
-    );
-    debug!("go to:{:?}", res.load_local_path());
-
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
-            return;
-        }
-    }
+    }    
 
     // terminal
     debug!("check terminal {}", name);

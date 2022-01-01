@@ -199,6 +199,12 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     debug!("go to:{:?}", res.load_local_path());
 
     if res.load_local_path().len() > 0 {
+        let last_pos = *(res.load_local_path().last().unwrap());
+        let json_str = serde_json::to_string(&last_pos).unwrap();
+        creep.memory().set("target_pos", json_str);
+        creep.memory().set("target_pos_count", 5);
+        creep.memory().set("harvesting", true);
+
         let res = creep.move_by_path_search_result(&res);
         if res == ReturnCode::Ok {
             info!("move to enemy: {:?}", res);
