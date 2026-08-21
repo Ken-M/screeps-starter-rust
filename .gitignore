@@ -1,10 +1,18 @@
 # Compiled source #
 ###################
 target
+node_modules
+dist
+pkg
 
-# Build Files #
-###############
-Cargo.lock
+# Backup / sync junk #
+######################
+*.bak
+desktop.ini
+
+# Secrets #
+###########
+.screeps.yaml
 
 # Packages #
 ############
