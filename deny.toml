@@ -1,0 +1,18 @@
+# cargo-deny 設定 (サプライチェーン攻撃対策)
+# 実行: cargo deny check advisories sources bans
+# (licenses チェックは運用していない。有効化するなら [licenses] に allow リストを書く)
+
+[advisories]
+# RustSec advisory DB による既知脆弱性の照会 (npm audit 相当)
+yanked = "deny"
+
+[sources]
+# 依存の取得元を crates.io のみに制限する。
+# git 依存・不明レジストリはサプライチェーン検証を素通りするため禁止。
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"

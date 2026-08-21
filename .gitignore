@@ -1,18 +1,12 @@
 # Compiled source #
 ###################
 target
-node_modules
 dist
 pkg
 
-# Backup / sync junk #
-######################
-*.bak
-desktop.ini
-
-# Secrets #
-###########
-.screeps.yaml
+# Dependencies #
+################
+node_modules
 
 # Packages #
 ############
@@ -45,4 +39,15 @@ nbproject
 *.iws
 *.sublime-project
 *.sublime-workspace
+
+# Config w/ secrets #
+#####################
+.screeps.yaml
+
+# Sync junk / backups #
+########################
+desktop.ini
+*.bak
+
+# Old config w/ secrets (kept until token migration) #
 screeps.toml

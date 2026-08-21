@@ -1,0 +1,17 @@
+# サプライチェーン攻撃対策: 凍結 crates.io-index によるソース置換 (cooldown 7日)
+#
+# tools/update-frozen-index.ps1 が D:\GitHub\_tools\crates.io-index を
+# 「7日前時点」のコミットに固定している。ここで crates.io をそのクローンに
+# 置き換えることで、公開から7日未満のクレートは依存解決の時点で存在しない
+# 扱いになる (方針: https://zenn.dev/nojima/articles/338d153cb5dd35)。
+#
+# 緊急のセキュリティパッチを即入れたいときだけ [source.crates-io] を
+# 一時的にコメントアウトして cargo update -p <crate> し、すぐ戻すこと。
+#
+# 将来: cargo の -Zmin-publish-age (RFC 3923) が stable 化したら、
+# この置換を外してそちらの設定に移行する。
+[source.crates-io]
+replace-with = "frozen-index"
+
+[source.frozen-index]
+registry = "file:///D:/GitHub/_tools/crates.io-index"
