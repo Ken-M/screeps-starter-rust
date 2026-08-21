@@ -3,11 +3,9 @@ use std::u128;
 
 use crate::util::*;
 use log::*;
-use screeps::constants::find::*;
-use screeps::{
-    find, pathfinder::SearchResults, prelude::*, Attackable, Creep, Part, ResourceType, ReturnCode,
-    RoomObjectProperties, StructureType,
-};
+use screeps::action_error_codes::CreepRepairErrorCode;
+use screeps::prelude::*;
+use screeps::{find, Creep};
 
 use crate::creeps::upgrader::*;
 
@@ -19,14 +17,14 @@ pub fn run_repairer(creep: &Creep) {
     let my_spawns = &creep
         .room()
         .expect("room is not visible to you")
-        .find(MY_SPAWNS);
+        .find(find::MY_SPAWNS, None);
 
     for my_spawn in my_spawns.iter() {
         if my_spawn.hits() < my_spawn.hits_max() {
             debug!("try repair spawns {}", name);
             let r = creep.repair(my_spawn);
 
-            if r == ReturnCode::Ok {
+            if r.is_ok() {
                 info!("repair spawn!!");
                 return;
             }
@@ -36,7 +34,7 @@ pub fn run_repairer(creep: &Creep) {
     let structures = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES, None);
 
     let mut is_skip_repair = false;
 
@@ -46,20 +44,22 @@ pub fn run_repairer(creep: &Creep) {
     for structure in structures.iter() {
         if check_repairable(structure) {
             if get_live_tickcount(structure).unwrap_or(10000) as u128 <= REPAIRER_DYING_THRESHOLD {
-                let r = creep.repair(structure);
+                if let Some(repairable) = structure.as_repairable() {
+                    let r = creep.repair(repairable);
 
-                if r == ReturnCode::Ok {
-                    info!(
-                        "repair my_structure!!:{:?},{:?},{:?}",
-                        structure.structure_type(),
-                        structure.pos().x(),
-                        structure.pos().y()
-                    );
-                    return;
-                }
+                    if r.is_ok() {
+                        info!(
+                            "repair my_structure!!:{:?},{:?},{:?}",
+                            structure.structure_type(),
+                            structure.pos().x(),
+                            structure.pos().y()
+                        );
+                        return;
+                    }
 
-                if r == ReturnCode::NotInRange {
-                    is_skip_repair = true;
+                    if r == Err(CreepRepairErrorCode::NotInRange) {
+                        is_skip_repair = true;
+                    }
                 }
             }
         }
@@ -73,20 +73,22 @@ pub fn run_repairer(creep: &Creep) {
         for structure in structures.iter() {
             if check_repairable(structure) {
                 if get_hp(structure).unwrap_or(0) as u128 <= (threshold + 1) {
-                    let r = creep.repair(structure);
+                    if let Some(repairable) = structure.as_repairable() {
+                        let r = creep.repair(repairable);
 
-                    if r == ReturnCode::Ok {
-                        info!(
-                            "repair my_structure!!:{:?},{:?},{:?}",
-                            structure.structure_type(),
-                            structure.pos().x(),
-                            structure.pos().y()
-                        );
-                        return;
-                    }
+                        if r.is_ok() {
+                            info!(
+                                "repair my_structure!!:{:?},{:?},{:?}",
+                                structure.structure_type(),
+                                structure.pos().x(),
+                                structure.pos().y()
+                            );
+                            return;
+                        }
 
-                    if r == ReturnCode::NotInRange {
-                        is_skip_repair = true;
+                        if r == Err(CreepRepairErrorCode::NotInRange) {
+                            is_skip_repair = true;
+                        }
                     }
                 }
             }
@@ -97,10 +99,10 @@ pub fn run_repairer(creep: &Creep) {
     // 残り時間が少ない物を優先.
     let res = find_nearest_repairable_item_except_wall_dying(&creep, REPAIRER_DYING_THRESHOLD);
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to repair: {:?}", res);
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if let Err(e) = res {
+            info!("couldn't move to repair: {:?}", e);
         }
         return;
     }
@@ -111,10 +113,10 @@ pub fn run_repairer(creep: &Creep) {
 
     let res = find_nearest_repairable_item_hp(&creep, (threshold + 1) as u32);
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to repair: {:?}", res);
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if let Err(e) = res {
+            info!("couldn't move to repair: {:?}", e);
         }
         return;
     }

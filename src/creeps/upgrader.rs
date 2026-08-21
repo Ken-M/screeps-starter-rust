@@ -1,10 +1,9 @@
 use crate::util::*;
 use log::*;
 
-use screeps::{
-    find, pathfinder::SearchResults, prelude::*, Creep, Part, ResourceType, ReturnCode,
-    RoomObjectProperties,
-};
+use screeps::action_error_codes::UpgradeControllerErrorCode;
+use screeps::prelude::*;
+use screeps::Creep;
 
 pub fn run_upgrader(creep: &Creep) {
     let name = creep.name();
@@ -20,36 +19,42 @@ pub fn run_upgrader(creep: &Creep) {
         if c.my() == true {
             let r = creep.upgrade_controller(&c);
 
-            if r == ReturnCode::NotInRange {
-                let res = find_path(&creep, &c.pos(), 3);
+            match r {
+                Err(UpgradeControllerErrorCode::NotInRange) => {
+                    let res = find_path(&creep, &c.pos(), 3);
 
-                if res.load_local_path().len() > 0 {
-                    let res = creep.move_by_path_search_result(&res);
-                    if res != ReturnCode::Ok {
-                        info!("couldn't move to upgrade: {:?}", res);
-                    } else {
-                        return;
+                    if res.path().len() > 0 {
+                        let res = move_by_search_result(&creep, &res);
+                        if let Err(e) = res {
+                            info!("couldn't move to upgrade: {:?}", e);
+                        } else {
+                            return;
+                        }
                     }
                 }
-            } else if r != ReturnCode::Ok {
-                warn!(
-                    "couldn't upgrade: {:?},{:?}",
-                    r,
-                    creep.store_used_capacity(None)
-                );
-            } else {
-                return;
+
+                Err(e) => {
+                    warn!(
+                        "couldn't upgrade: {:?},{:?}",
+                        e,
+                        creep.store().get_used_capacity(None)
+                    );
+                }
+
+                Ok(()) => {
+                    return;
+                }
             }
         }
     }
 
     let res = find_nearest_room_controler(&creep);
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to build: {:?}", res);
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if let Err(e) = res {
+            info!("couldn't move to build: {:?}", e);
         }
 
         return;

@@ -1,10 +1,7 @@
 use crate::util::*;
 use log::*;
-use screeps::constants::find::*;
-use screeps::{
-    find, pathfinder::SearchResults, prelude::*, Creep, Part, ResourceType, ReturnCode,
-    RoomObjectProperties,
-};
+use screeps::prelude::*;
+use screeps::{find, Creep};
 
 use crate::creeps::repairer::*;
 
@@ -16,7 +13,7 @@ pub fn run_builder(creep: &Creep) {
     let construction_sites = &creep
         .room()
         .expect("room is not visible to you")
-        .find(MY_CONSTRUCTION_SITES);
+        .find(find::MY_CONSTRUCTION_SITES, None);
 
     let room_name = creep.room().expect("room is not visible to you").name();
 
@@ -28,7 +25,7 @@ pub fn run_builder(creep: &Creep) {
             <= (threshold + 1) as u32
         {
             let r = creep.build(construction_site);
-            if r == ReturnCode::Ok {
+            if r.is_ok() {
                 info!("build to my_construction_sites!!");
                 return;
             }
@@ -36,12 +33,12 @@ pub fn run_builder(creep: &Creep) {
     }
 
     let res = find_nearest_construction_site(&creep, (threshold + 1) as u32);
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to build: {:?}", res);
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if let Err(e) = res {
+            info!("couldn't move to build: {:?}", e);
         }
 
         return;

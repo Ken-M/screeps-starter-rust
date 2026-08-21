@@ -1,10 +1,8 @@
+use crate::mem::MemoryExt;
 use crate::util::*;
 use log::*;
-use screeps::constants::find::*;
-use screeps::{
-    find, pathfinder::SearchResults, prelude::*, Creep, Part, ResourceType, ReturnCode,
-    RoomObjectProperties, StructureType, Transferable,
-};
+use screeps::prelude::*;
+use screeps::{find, Creep, ResourceType, StructureType};
 use std::cmp::*;
 
 use crate::creeps::builder::*;
@@ -17,13 +15,13 @@ pub fn run_harvester(creep: &Creep) {
     let my_spawns = &creep
         .room()
         .expect("room is not visible to you")
-        .find(MY_SPAWNS);
+        .find(find::MY_SPAWNS, None);
 
     for my_spawn in my_spawns.iter() {
         debug!("try transfer to spawns {}", name);
-        let r = creep.transfer_all(my_spawn, ResourceType::Energy);
+        let r = creep.transfer(my_spawn, ResourceType::Energy, None);
 
-        if r == ReturnCode::Ok {
+        if r.is_ok() {
             info!("transferd to spawn!!");
             return;
         }
@@ -37,7 +35,7 @@ pub fn run_harvester(creep: &Creep) {
     let structures = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES, None);
 
     for structure in structures.iter() {
         if structure.structure_type() != StructureType::Extension {
@@ -47,9 +45,9 @@ pub fn run_harvester(creep: &Creep) {
         if check_transferable(structure, &ResourceType::Energy, None) {
             match structure.as_transferable() {
                 Some(transf) => {
-                    let r = creep.transfer_all(transf, ResourceType::Energy);
+                    let r = creep.transfer(transf, ResourceType::Energy, None);
 
-                    if r == ReturnCode::Ok {
+                    if r.is_ok() {
                         info!("transferd to my_structure!!");
                         return;
                     }
@@ -69,11 +67,11 @@ pub fn run_harvester(creep: &Creep) {
         Some(20 as f64),
         None,
     );
-    debug!("go to extention:{:?}", res.load_local_path());
+    debug!("go to extention:{:?}", res.path());
 
-    if res.incomplete == false {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
+    if res.incomplete() == false {
+        let res = move_by_search_result(&creep, &res);
+        if res.is_ok() {
             return;
         }
 
@@ -109,13 +107,15 @@ pub fn run_harvester(creep: &Creep) {
                             Some(has_store) => {
                                 if structure.pos() == creep.pos() {
                                     let trans_amount: u32 = min(
-                                        has_store.store_free_capacity(Some(ResourceType::Energy))
+                                        has_store
+                                            .store()
+                                            .get_free_capacity(Some(ResourceType::Energy))
                                             as u32,
-                                        creep.store_of(ResourceType::Energy),
+                                        creep.store().get_used_capacity(Some(ResourceType::Energy)),
                                     );
                                     let r = creep.drop(ResourceType::Energy, Some(trans_amount));
 
-                                    if r == ReturnCode::Ok {
+                                    if r.is_ok() {
                                         info!("dropeed to container!!");
                                         return;
                                     }
@@ -135,9 +135,9 @@ pub fn run_harvester(creep: &Creep) {
             } else {
                 match structure.as_transferable() {
                     Some(transf) => {
-                        let r = creep.transfer_all(transf, ResourceType::Energy);
+                        let r = creep.transfer(transf, ResourceType::Energy, None);
 
-                        if r == ReturnCode::Ok {
+                        if r.is_ok() {
                             info!("transferd to my_structure!!");
                             return;
                         }
@@ -158,11 +158,11 @@ pub fn run_harvester(creep: &Creep) {
         &is_harvested_from_terminal,
         &is_harvested_from_link,
     );
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if res.is_ok() {
             return;
         }
 
@@ -181,13 +181,13 @@ pub fn run_harvester_spawn(creep: &Creep) {
     let my_spawns = &creep
         .room()
         .expect("room is not visible to you")
-        .find(MY_SPAWNS);
+        .find(find::MY_SPAWNS, None);
 
     for my_spawn in my_spawns.iter() {
         debug!("try transfer to spawns {}", name);
-        let r = creep.transfer_all(my_spawn, ResourceType::Energy);
+        let r = creep.transfer(my_spawn, ResourceType::Energy, None);
 
-        if r == ReturnCode::Ok {
+        if r.is_ok() {
             info!("transferd to spawn!!");
             return;
         }
@@ -200,11 +200,11 @@ pub fn run_harvester_spawn(creep: &Creep) {
         None,
         None,
     );
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if res.is_ok() {
             return;
         }
     }
@@ -215,7 +215,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
     let my_towers = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES, None);
 
     for my_tower in my_towers.iter() {
         if my_tower.structure_type() == StructureType::Tower {
@@ -227,15 +227,22 @@ pub fn run_harvester_spawn(creep: &Creep) {
                             Some(transf) => {
                                 match my_tower.as_has_store() {
                                     Some(has_store) => {
-                                        if has_store.store_free_capacity(Some(ResourceType::Energy))
-                                            > (has_store.store_capacity(Some(ResourceType::Energy))
+                                        if has_store
+                                            .store()
+                                            .get_free_capacity(Some(ResourceType::Energy))
+                                            > (has_store
+                                                .store()
+                                                .get_capacity(Some(ResourceType::Energy))
                                                 as i32
                                                 / 2 as i32)
                                         {
-                                            let r =
-                                                creep.transfer_all(transf, ResourceType::Energy);
+                                            let r = creep.transfer(
+                                                transf,
+                                                ResourceType::Energy,
+                                                None,
+                                            );
 
-                                            if r == ReturnCode::Ok {
+                                            if r.is_ok() {
                                                 info!("transferd to tower!!");
                                                 return;
                                             }
@@ -270,11 +277,11 @@ pub fn run_harvester_spawn(creep: &Creep) {
         None,
         Some(0.5),
     );
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if res.is_ok() {
             return;
         }
     }
@@ -283,7 +290,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
     let my_structures = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES, None);
 
     for my_structure in my_structures.iter() {
         if my_structure.structure_type() == StructureType::Extension {
@@ -295,13 +302,18 @@ pub fn run_harvester_spawn(creep: &Creep) {
                             Some(transf) => {
                                 match my_structure.as_has_store() {
                                     Some(has_store) => {
-                                        if has_store.store_free_capacity(Some(ResourceType::Energy))
+                                        if has_store
+                                            .store()
+                                            .get_free_capacity(Some(ResourceType::Energy))
                                             > 0
                                         {
-                                            let r =
-                                                creep.transfer_all(transf, ResourceType::Energy);
+                                            let r = creep.transfer(
+                                                transf,
+                                                ResourceType::Energy,
+                                                None,
+                                            );
 
-                                            if r == ReturnCode::Ok {
+                                            if r.is_ok() {
                                                 info!("transferd to extention!!");
                                                 return;
                                             }
@@ -335,14 +347,14 @@ pub fn run_harvester_spawn(creep: &Creep) {
         None,
         None,
     );
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if res.is_ok() {
             return;
         }
-    }    
+    }
 
     // terminal
     debug!("check terminal {}", name);
@@ -353,10 +365,10 @@ pub fn run_harvester_spawn(creep: &Creep) {
         debug!("try transfer to terminal {}", name);
 
         if terminal.my() == true {
-            if terminal.store_free_capacity(Some(ResourceType::Energy)) > 0 {
-                let r = creep.transfer_all(terminal, ResourceType::Energy);
+            if terminal.store().get_free_capacity(Some(ResourceType::Energy)) > 0 {
+                let r = creep.transfer(terminal, ResourceType::Energy, None);
 
-                if r == ReturnCode::Ok {
+                if r.is_ok() {
                     info!("transferd to terminal!!");
                     return;
                 }
@@ -372,11 +384,11 @@ pub fn run_harvester_spawn(creep: &Creep) {
         None,
         None,
     );
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if res.is_ok() {
             return;
         }
     }
@@ -389,7 +401,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
     let _name = creep.name();
     info!("running harvester mineral {}", creep.name());
 
-    if creep.store_used_capacity(None) <= 0 {
+    if creep.store().get_used_capacity(None) <= 0 {
         // nothing to do.
         return;
     }
@@ -400,7 +412,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
     let structures = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES, None);
 
     let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 
@@ -429,7 +441,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
         }
 
         for resource_type in resrouce_type_list.iter() {
-            if &creep.store_of(*resource_type) > &(0 as u32) {
+            if creep.store().get_used_capacity(Some(*resource_type)) > 0 as u32 {
                 if check_transferable(structure, &resource_type, None) {
                     if structure.structure_type() == StructureType::Container {
                         match structure.as_transferable() {
@@ -438,13 +450,17 @@ pub fn run_harvester_mineral(creep: &Creep) {
                                     Some(has_store) => {
                                         if structure.pos() == creep.pos() {
                                             let trans_amount: u32 = min(
-                                                has_store.store_free_capacity(Some(*resource_type))
+                                                has_store
+                                                    .store()
+                                                    .get_free_capacity(Some(*resource_type))
                                                     as u32,
-                                                creep.store_of(*resource_type),
+                                                creep
+                                                    .store()
+                                                    .get_used_capacity(Some(*resource_type)),
                                             );
                                             let r = creep.drop(*resource_type, Some(trans_amount));
 
-                                            if r == ReturnCode::Ok {
+                                            if r.is_ok() {
                                                 info!("dropeed to container!!");
                                                 return;
                                             }
@@ -464,9 +480,9 @@ pub fn run_harvester_mineral(creep: &Creep) {
                     } else {
                         match structure.as_transferable() {
                             Some(transf) => {
-                                let r = creep.transfer_all(transf, *resource_type);
+                                let r = creep.transfer(transf, *resource_type, None);
 
-                                if r == ReturnCode::Ok {
+                                if r.is_ok() {
                                     info!("transferd to my_structure!!");
                                     return;
                                 }
@@ -489,12 +505,12 @@ pub fn run_harvester_mineral(creep: &Creep) {
         &is_harvested_from_terminal,
         &false,
     );
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to transfer: {:?}", res);
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if let Err(e) = res {
+            info!("couldn't move to transfer: {:?}", e);
         }
 
         return;
@@ -505,7 +521,7 @@ pub fn run_carrier_mineral(creep: &Creep) {
     let _name = creep.name();
     info!("running carrier mineral {}", creep.name());
 
-    if creep.store_used_capacity(None) <= 0 {
+    if creep.store().get_used_capacity(None) <= 0 {
         // nothing to do.
         return;
     }
@@ -513,7 +529,7 @@ pub fn run_carrier_mineral(creep: &Creep) {
     let structures = &creep
         .room()
         .expect("room is not visible to you")
-        .find(STRUCTURES);
+        .find(find::STRUCTURES, None);
 
     let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 
@@ -524,13 +540,13 @@ pub fn run_carrier_mineral(creep: &Creep) {
         }
 
         for resource_type in resrouce_type_list.iter() {
-            if &creep.store_of(*resource_type) > &(0 as u32) {
+            if creep.store().get_used_capacity(Some(*resource_type)) > 0 as u32 {
                 if check_transferable(structure, &resource_type, None) {
                     match structure.as_transferable() {
                         Some(transf) => {
-                            let r = creep.transfer_all(transf, *resource_type);
+                            let r = creep.transfer(transf, *resource_type, None);
 
-                            if r == ReturnCode::Ok {
+                            if r.is_ok() {
                                 info!("transferd to my_structure!!");
                                 return;
                             }
@@ -546,12 +562,12 @@ pub fn run_carrier_mineral(creep: &Creep) {
     }
 
     let res = find_nearest_transfarable_terminal(&creep, &ResourceKind::MINELALS);
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let res = creep.move_by_path_search_result(&res);
-        if res != ReturnCode::Ok {
-            info!("couldn't move to transfer: {:?}", res);
+    if res.path().len() > 0 {
+        let res = move_by_search_result(&creep, &res);
+        if let Err(e) = res {
+            info!("couldn't move to transfer: {:?}", e);
         }
 
         return;

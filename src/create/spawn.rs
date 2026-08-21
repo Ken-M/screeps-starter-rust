@@ -1,68 +1,53 @@
 use crate::constants::*;
 use std::usize;
 
+use crate::mem::{self, MemoryExt};
 use log::*;
-use screeps::constants::find::*;
-use screeps::Structure;
-
-use screeps::{
-    find, prelude::*, Attackable, IntoExpectedType, Part, ResourceType, ReturnCode,
-    RoomObjectProperties, StructureType,
-};
+use screeps::action_error_codes::SpawnCreepErrorCode;
+use screeps::enums::StructureObject;
+use screeps::prelude::*;
+use screeps::{find, game, Part, ResourceType};
 
 const MAX_NUM_OF_CREEPS: u32 = 14;
 
 pub fn do_spawn() {
-    if screeps::game::creeps::values().len() >= MAX_NUM_OF_CREEPS as usize {
+    let num_total_creep = game::creeps().values().count() as i32;
+
+    if num_total_creep >= MAX_NUM_OF_CREEPS as i32 {
         return;
     }
 
-    let _num_upgrader: i32 = screeps::memory::root()
-        .i32("num_upgrader")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let _num_builder: i32 = screeps::memory::root()
-        .i32("num_builder")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let _num_harvester: i32 = screeps::memory::root()
-        .i32("num_harvester")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let _num_harvester_spawn: i32 = screeps::memory::root()
+    let root = mem::root();
+
+    let _num_upgrader: i32 = root.i32("num_upgrader").unwrap_or(Some(0)).unwrap_or(0);
+    let _num_builder: i32 = root.i32("num_builder").unwrap_or(Some(0)).unwrap_or(0);
+    let _num_harvester: i32 = root.i32("num_harvester").unwrap_or(Some(0)).unwrap_or(0);
+    let _num_harvester_spawn: i32 = root
         .i32("num_harvester_spawn")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let _num_harvester_mineral: i32 = screeps::memory::root()
+    let _num_harvester_mineral: i32 = root
         .i32("num_harvester_mineral")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let _num_carrier_mineral: i32 = screeps::memory::root()
+    let _num_carrier_mineral: i32 = root
         .i32("num_carrier_mineral")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let _num_repairer: i32 = screeps::memory::root()
-        .i32("num_repairer")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
+    let _num_repairer: i32 = root.i32("num_repairer").unwrap_or(Some(0)).unwrap_or(0);
 
-    let opt_num_attackable_short: i32 = screeps::memory::root()
+    let opt_num_attackable_short: i32 = root
         .i32("opt_num_attackable_short")
         .unwrap_or(Some(0))
         .unwrap_or(0);
-    let opt_num_attackable_long: i32 = screeps::memory::root()
+    let opt_num_attackable_long: i32 = root
         .i32("opt_num_attackable_long")
         .unwrap_or(Some(0))
         .unwrap_or(0);
 
-    let num_total_creep = screeps::game::creeps::values().len() as i32;
+    let cap_worker_carry: i32 = root.i32("cap_worker_carry").unwrap_or(Some(0)).unwrap_or(0);
 
-    let cap_worker_carry: i32 = screeps::memory::root()
-        .i32("cap_worker_carry")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-
-    for spawn in screeps::game::spawns::values() {
+    for spawn in game::spawns().values() {
         info!("running spawn {}", spawn.name());
 
         // check got attacked.
@@ -79,7 +64,7 @@ pub fn do_spawn() {
 
             match my_controller {
                 Some(controller) => {
-                    controller.activate_safe_mode();
+                    let _ = controller.activate_safe_mode();
                 }
                 None => {
                     //nothint to do.
@@ -91,17 +76,20 @@ pub fn do_spawn() {
         let all_structures = spawn
             .room()
             .expect("room is not visible to you")
-            .find(STRUCTURES);
+            .find(find::STRUCTURES, None);
 
-        let mut sum_energy = spawn.store_of(ResourceType::Energy);
-        let mut extention_cap = spawn.store_capacity(Some(ResourceType::Energy));
+        let mut sum_energy = spawn.store().get_used_capacity(Some(ResourceType::Energy));
+        let mut extention_cap = spawn.store().get_capacity(Some(ResourceType::Energy));
 
         for structure in all_structures {
             match structure {
-                Structure::Extension(extention) => {
+                StructureObject::StructureExtension(extention) => {
                     if extention.my() == true {
-                        sum_energy += extention.store_of(ResourceType::Energy);
-                        extention_cap += extention.store_capacity(Some(ResourceType::Energy));
+                        sum_energy += extention
+                            .store()
+                            .get_used_capacity(Some(ResourceType::Energy));
+                        extention_cap +=
+                            extention.store().get_capacity(Some(ResourceType::Energy));
                     }
                 }
                 _ => {
@@ -218,25 +206,27 @@ pub fn do_spawn() {
 
         if body.len() > 0 {
             // create a unique name, spawn.
-            let name_base = screeps::game::time();
+            let name_base = game::time();
             let mut additional = 0;
             let res = loop {
                 let name = format!("{}-{}", name_base, additional);
                 debug!("try spawn {:?}", body);
                 let res = spawn.spawn_creep(&body, &name);
 
-                if res == ReturnCode::NameExists {
+                if res == Err(SpawnCreepErrorCode::NameExists) {
                     additional += 1;
                 } else {
                     break res;
                 }
             };
 
-            if res != ReturnCode::Ok {
-                info!("couldn't spawn: {:?}", res);
-            }
-            if res == ReturnCode::Ok {
-                info!("spawn: {:?}", body);
+            match res {
+                Err(e) => {
+                    info!("couldn't spawn: {:?}", e);
+                }
+                Ok(()) => {
+                    info!("spawn: {:?}", body);
+                }
             }
         }
     }

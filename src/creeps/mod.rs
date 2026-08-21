@@ -4,14 +4,15 @@ mod repairer;
 mod upgrader;
 
 use crate::constants::*;
+use crate::mem::{self, MemoryExt};
 use crate::util::*;
 use log::*;
-use screeps::constants::find::*;
-use screeps::Structure;
-use screeps::{
-    find, look::CREEPS, pathfinder::SearchResults, prelude::*, resource, Creep, LookConstant, Part,
-    Position, ResourceType, ReturnCode, RoomObjectProperties, StructureType,
-};
+use screeps::action_error_codes::{HarvestErrorCode, CreepMoveToErrorCode};
+use screeps::enums::StructureObject;
+use screeps::local::Position;
+use screeps::pathfinder::SearchResults;
+use screeps::prelude::*;
+use screeps::{find, game, look, Creep, Part};
 
 #[derive(PartialEq, Debug)]
 enum AttackerKind {
@@ -32,11 +33,11 @@ fn reset_source_target(
         let res = find_nearest_active_source(&creep, harvest_kind, false);
         debug!(
             "harvesting : find_nearest_active_source result:{:?}",
-            res.load_local_path()
+            res.path()
         );
 
-        if res.load_local_path().len() > 0 && res.incomplete == false {
-            let last_pos = *(res.load_local_path().last().unwrap());
+        if res.path().len() > 0 && res.incomplete() == false {
+            let last_pos = *(res.path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", 20);
@@ -48,16 +49,15 @@ fn reset_source_target(
                 creep.memory().string("target_pos")
             );
 
-            let ret_position = res.load_local_path().last().unwrap().clone();
-            return (res, ret_position);
+            return (res, last_pos);
         }
 
         // storageをチェック.
         if *harvest_kind == ResourceKind::ENERGY {
             let res = find_nearest_stored_source(&creep, harvest_kind, true);
 
-            if res.load_local_path().len() > 0 && res.incomplete == false {
-                let last_pos = *(res.load_local_path().last().unwrap());
+            if res.path().len() > 0 && res.incomplete() == false {
+                let last_pos = *(res.path().last().unwrap());
                 let json_str = serde_json::to_string(&last_pos).unwrap();
                 creep.memory().set("target_pos", json_str);
                 creep.memory().set("target_pos_count", 10);
@@ -69,16 +69,15 @@ fn reset_source_target(
                     creep.memory().string("target_pos")
                 );
 
-                let ret_position = res.load_local_path().last().unwrap().clone();
-                return (res, ret_position);
+                return (res, last_pos);
             }
         }
     } else {
         // storageをチェック.
         let res = find_nearest_stored_source(&creep, harvest_kind, false);
 
-        if res.load_local_path().len() > 0 && res.incomplete == false {
-            let last_pos = *(res.load_local_path().last().unwrap());
+        if res.path().len() > 0 && res.incomplete() == false {
+            let last_pos = *(res.path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", 20);
@@ -90,19 +89,18 @@ fn reset_source_target(
                 creep.memory().string("target_pos")
             );
 
-            let ret_position = res.load_local_path().last().unwrap().clone();
-            return (res, ret_position);
+            return (res, last_pos);
         }
 
         // active sourceをチェック.
         let res = find_nearest_active_source(&creep, harvest_kind, true);
         debug!(
             "harvesting : find_nearest_active_source result:{:?}",
-            res.load_local_path()
+            res.path()
         );
 
-        if res.load_local_path().len() > 0 && res.incomplete == false {
-            let last_pos = *(res.load_local_path().last().unwrap());
+        if res.path().len() > 0 && res.incomplete() == false {
+            let last_pos = *(res.path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", 10);
@@ -114,16 +112,15 @@ fn reset_source_target(
                 creep.memory().string("target_pos")
             );
 
-            let ret_position = res.load_local_path().last().unwrap().clone();
-            return (res, ret_position);
+            return (res, last_pos);
         }
     }
 
     //　やむなく枯渇sourceを選ぶ.
     let res = find_nearest_exhausted_source(&creep, harvest_kind);
 
-    if res.load_local_path().len() > 0 {
-        let last_pos = *(res.load_local_path().last().unwrap());
+    if res.path().len() > 0 {
+        let last_pos = *(res.path().last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
         creep.memory().set("target_pos_count", 5);
@@ -135,12 +132,11 @@ fn reset_source_target(
             creep.memory().string("target_pos")
         );
 
-        let ret_position = res.load_local_path().last().unwrap().clone();
-        return (res, ret_position);
+        return (res, last_pos);
     }
 
     //全部ダメならとりあえずその場待機.
-    &creep.memory().set("nothing_to_harvest", true);
+    creep.memory().set("nothing_to_harvest", true);
     let res = find_path(&creep, &creep.pos(), 0);
     return (res, creep.pos().clone());
 }
@@ -150,7 +146,7 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     let enemies = creep
         .room()
         .expect("room is not visible to you")
-        .find(HOSTILE_CREEPS);
+        .find(find::HOSTILE_CREEPS, None);
 
     if enemies.len() == 0 {
         return false;
@@ -163,7 +159,7 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
             AttackerKind::SHORT => {
                 let r = creep.attack(&enemy);
 
-                if r == ReturnCode::Ok {
+                if r.is_ok() {
                     info!("attack to enemy!!");
                     return true;
                 }
@@ -172,7 +168,7 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
             AttackerKind::RANGED => {
                 let r = creep.ranged_attack(&enemy);
 
-                if r == ReturnCode::Ok {
+                if r.is_ok() {
                     info!("attack to enemy!!");
                     return true;
                 }
@@ -196,18 +192,18 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     }
 
     let res = find_nearest_enemy(&creep, range);
-    debug!("go to:{:?}", res.load_local_path());
+    debug!("go to:{:?}", res.path());
 
-    if res.load_local_path().len() > 0 {
-        let last_pos = *(res.load_local_path().last().unwrap());
+    if res.path().len() > 0 {
+        let last_pos = *(res.path().last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
         creep.memory().set("target_pos_count", 5);
         creep.memory().set("harvesting", true);
 
-        let res = creep.move_by_path_search_result(&res);
-        if res == ReturnCode::Ok {
-            info!("move to enemy: {:?}", res);
+        let move_result = move_by_search_result(&creep, &res);
+        if move_result.is_ok() {
+            info!("move to enemy: {:?}", move_result);
             return true;
         }
     }
@@ -223,10 +219,10 @@ fn get_role_and_attacker_kind(creep: &Creep) -> (String, AttackerKind) {
     // attacker kind check.
     let body_list = creep.body();
     for body_part in body_list {
-        if body_part.part == Part::Attack {
+        if body_part.part() == Part::Attack {
             attacker_kind = AttackerKind::SHORT;
             break;
-        } else if body_part.part == Part::RangedAttack {
+        } else if body_part.part() == Part::RangedAttack {
             attacker_kind = AttackerKind::RANGED;
             break;
         }
@@ -257,17 +253,17 @@ pub fn creep_loop() {
 
     let mut cap_worker_carry: u128 = 0;
 
-    for creep in screeps::game::creeps::values() {
+    // creep 総数は tick 内で不変なので 1 回だけ数える (JS 境界越えの節約).
+    let total_creeps = game::creeps().values().count();
+
+    for creep in game::creeps().values() {
         let name = creep.name();
         debug!("checking creep {}", name);
 
-        let mut attacker_kind: AttackerKind = AttackerKind::NONE;
-        let mut role_string = String::from("none");
-
         let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
 
-        role_string = role_and_attacker_kind.0;
-        attacker_kind = role_and_attacker_kind.1;
+        let role_string = role_and_attacker_kind.0;
+        let attacker_kind = role_and_attacker_kind.1;
 
         debug!("role:{:?}:atk:{:?}", role_string, attacker_kind);
 
@@ -288,12 +284,12 @@ pub fn creep_loop() {
         match role_string.as_str() {
             "harvester" => {
                 num_harvester += 1;
-                cap_worker_carry += creep.store_capacity(None) as u128;
+                cap_worker_carry += creep.store().get_capacity(None) as u128;
             }
 
             "harvester_spawn" => {
                 num_harvester_spawn += 1;
-                cap_worker_carry += creep.store_capacity(None) as u128;
+                cap_worker_carry += creep.store().get_capacity(None) as u128;
             }
 
             "harvester_mineral" => {
@@ -328,31 +324,24 @@ pub fn creep_loop() {
 
     // if no harvester, clear role.
     if (num_harvester + num_harvester_spawn <= 2)
-        && (screeps::game::creeps::values().len() > (num_harvester + num_harvester_spawn) as usize)
+        && (total_creeps > (num_harvester + num_harvester_spawn) as usize)
     {
-        for creep in screeps::game::creeps::values() {
+        for creep in game::creeps().values() {
             creep.memory().del("role");
         }
     }
 
-    for creep in screeps::game::creeps::values() {
+    for creep in game::creeps().values() {
         let name = creep.name();
-        info!(
-            "running creep {}, cpu:{}",
-            name,
-            screeps::game::cpu::get_used()
-        );
-
-        let mut attacker_kind: AttackerKind = AttackerKind::NONE;
-        let mut role_string = String::from("none");
+        info!("running creep {}, cpu:{}", name, game::cpu::get_used());
 
         let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
         let mut harvest_kind: ResourceKind = ResourceKind::ENERGY;
 
         let mut is_harvester = false;
 
-        role_string = role_and_attacker_kind.0;
-        attacker_kind = role_and_attacker_kind.1;
+        let mut role_string = role_and_attacker_kind.0;
+        let attacker_kind = role_and_attacker_kind.1;
 
         match role_string.as_str() {
             "none" => {
@@ -360,22 +349,20 @@ pub fn creep_loop() {
                     creep.memory().set("role", "harvester_spawn");
                     num_harvester_spawn += 1;
                     role_string = String::from("harvester_spawn");
-                    cap_worker_carry += creep.store_capacity(None) as u128;
-                } else if num_upgrader < (screeps::game::creeps::values().len() as i32 / 10) + 1 {
+                    cap_worker_carry += creep.store().get_capacity(None) as u128;
+                } else if num_upgrader < (total_creeps as i32 / 10) + 1 {
                     creep.memory().set("role", "upgrader");
                     num_upgrader += 1;
                     role_string = String::from("upgrader");
-                } else if num_builder < (screeps::game::creeps::values().len() as i32 / 6) {
+                } else if num_builder < (total_creeps as i32 / 6) {
                     creep.memory().set("role", "builder");
                     num_builder += 1;
                     role_string = String::from("builder");
-                } else if num_repairer < (screeps::game::creeps::values().len() as i32 / 6) {
+                } else if num_repairer < (total_creeps as i32 / 6) {
                     creep.memory().set("role", "repairer");
                     num_repairer += 1;
                     role_string = String::from("repairer");
-                } else if (num_harvester_mineral <= 0)
-                    && (screeps::game::creeps::values().len() as i32 > 13)
-                {
+                } else if (num_harvester_mineral <= 0) && (total_creeps as i32 > 13) {
                     creep.memory().set("role", "harvester_mineral");
                     num_harvester_mineral += 1;
                     harvest_kind = ResourceKind::MINELALS;
@@ -386,7 +373,7 @@ pub fn creep_loop() {
                     num_harvester += 1;
                     role_string = String::from("harvester");
                     is_harvester = true;
-                    cap_worker_carry += creep.store_capacity(None) as u128;
+                    cap_worker_carry += creep.store().get_capacity(None) as u128;
                 } else if let Some(_my_terminal) = creep.room().expect("I can't see").terminal() {
                     if num_carrier_mineral <= 0 {
                         creep.memory().set("role", "carrier_mineral");
@@ -442,9 +429,9 @@ pub fn creep_loop() {
         }
 
         if creep.memory().bool("harvesting") {
-            if (creep.store_free_capacity(None) == 0)
+            if (creep.store().get_free_capacity(None) == 0)
                 || ((creep.memory().bool("nothing_to_harvest"))
-                    && (creep.store_used_capacity(None) > 0))
+                    && (creep.store().get_used_capacity(None) > 0))
             {
                 creep.memory().set("harvesting", false);
                 creep.memory().del("target_pos");
@@ -452,7 +439,7 @@ pub fn creep_loop() {
                 creep.memory().del("nothing_to_harvest");
             }
         } else {
-            if creep.store_used_capacity(None) == 0 {
+            if creep.store().get_used_capacity(None) == 0 {
                 creep.memory().set("harvesting", true);
                 creep.memory().del("target_pos");
                 creep.memory().del("harvested_from_storage");
@@ -485,18 +472,18 @@ pub fn creep_loop() {
                                     path_search_result = find_path(&creep, &defined_target_pos, 0);
                                     debug!(
                                         "harvesting decided path:{:?}",
-                                        path_search_result.load_local_path()
+                                        path_search_result.path()
                                     );
 
                                     let look_result =
                                         creep.room().expect("I can't see").look_for_at_xy(
-                                            CREEPS,
-                                            defined_target_pos.x(),
-                                            defined_target_pos.y(),
+                                            look::CREEPS,
+                                            defined_target_pos.x().u8(),
+                                            defined_target_pos.y().u8(),
                                         );
 
                                     for one_result in look_result {
-                                        if one_result != creep {
+                                        if one_result.name() != creep.name() {
                                             debug!("re-check source :{}", defined_target_pos);
                                             creep.memory().del("target_pos");
 
@@ -548,14 +535,13 @@ pub fn creep_loop() {
             let resources = &creep
                 .room()
                 .expect("room is not visible to you")
-                .find(find::DROPPED_RESOURCES);
+                .find(find::DROPPED_RESOURCES, None);
 
             for resource in resources.iter() {
-                if creep.pos().is_near_to(resource)
+                if creep.pos().is_near_to(resource.pos())
                     && check_resouce_type_kind_matching(&resource.resource_type(), &harvest_kind)
                 {
-                    let r = creep.pickup(resource);
-                    if r != ReturnCode::Ok {
+                    if let Err(r) = creep.pickup(resource) {
                         warn!("couldn't pick-up dropped resrouces: {:?}", r);
                         continue;
                     }
@@ -569,14 +555,13 @@ pub fn creep_loop() {
                 let ruins = &creep
                     .room()
                     .expect("room is not visible to you")
-                    .find(find::RUINS);
+                    .find(find::RUINS, None);
 
                 for ruin in ruins.iter() {
-                    if creep.pos().is_near_to(ruin) {
+                    if creep.pos().is_near_to(ruin.pos()) {
                         for resource_type in resource_type_list.iter() {
-                            if ruin.store_of(*resource_type) > 0 {
-                                let r = creep.withdraw_all(ruin, *resource_type);
-                                if r != ReturnCode::Ok {
+                            if ruin.store().get_used_capacity(Some(*resource_type)) > 0 {
+                                if let Err(r) = creep.withdraw(ruin, *resource_type, None) {
                                     warn!("couldn't withdraw from RUINs: {:?}", r);
                                     break;
                                 }
@@ -597,14 +582,13 @@ pub fn creep_loop() {
                 let tombstones = &creep
                     .room()
                     .expect("room is not visible to you")
-                    .find(find::TOMBSTONES);
+                    .find(find::TOMBSTONES, None);
 
                 for tombstone in tombstones.iter() {
-                    if creep.pos().is_near_to(tombstone) {
+                    if creep.pos().is_near_to(tombstone.pos()) {
                         for resource_type in resource_type_list.iter() {
-                            if tombstone.store_of(*resource_type) > 0 {
-                                let r = creep.withdraw_all(tombstone, *resource_type);
-                                if r != ReturnCode::Ok {
+                            if tombstone.store().get_used_capacity(Some(*resource_type)) > 0 {
+                                if let Err(r) = creep.withdraw(tombstone, *resource_type, None) {
                                     warn!("couldn't withdraw from TOMBSTONES: {:?}", r);
                                     break;
                                 }
@@ -625,12 +609,11 @@ pub fn creep_loop() {
                 let sources = &creep
                     .room()
                     .expect("room is not visible to you")
-                    .find(find::SOURCES_ACTIVE);
+                    .find(find::SOURCES_ACTIVE, None);
 
                 for source in sources.iter() {
-                    if creep.pos().is_near_to(source) {
-                        let r = creep.harvest(source);
-                        if r != ReturnCode::Ok {
+                    if creep.pos().is_near_to(source.pos()) {
+                        if let Err(r) = creep.harvest(source) {
                             warn!("couldn't harvest from ActiveSource: {:?}", r);
                             continue;
                         }
@@ -644,14 +627,18 @@ pub fn creep_loop() {
                 let sources = &creep
                     .room()
                     .expect("room is not visible to you")
-                    .find(find::MINERALS);
+                    .find(find::MINERALS, None);
 
                 for source in sources.iter() {
-                    if creep.pos().is_near_to(source) {
-                        let r = creep.harvest(source);
-                        if r != ReturnCode::Ok && r != ReturnCode::Tired {
-                            info!("couldn't harvest from Minerals: {:?}", r);
-                            continue;
+                    if creep.pos().is_near_to(source.pos()) {
+                        match creep.harvest(source) {
+                            Ok(()) | Err(HarvestErrorCode::Tired) => {
+                                // Tired は採掘クールダウン中なのでその場維持 (旧実装と同じ扱い).
+                            }
+                            Err(r) => {
+                                info!("couldn't harvest from Minerals: {:?}", r);
+                                continue;
+                            }
                         }
                         is_harvested = true;
                         break;
@@ -664,16 +651,17 @@ pub fn creep_loop() {
                 let structures = &creep
                     .room()
                     .expect("room is not visible to you")
-                    .find(find::STRUCTURES);
+                    .find(find::STRUCTURES, None);
 
                 for structure in structures.iter() {
-                    if creep.pos().is_near_to(structure) {
+                    if creep.pos().is_near_to(structure.pos()) {
                         for resource_type in resource_type_list.iter() {
                             if check_stored(structure, &resource_type, 0) {
                                 match structure {
-                                    Structure::Container(container) => {
-                                        let r = creep.withdraw_all(container, *resource_type);
-                                        if r != ReturnCode::Ok {
+                                    StructureObject::StructureContainer(container) => {
+                                        if let Err(r) =
+                                            creep.withdraw(container, *resource_type, None)
+                                        {
                                             warn!("couldn't withdraw from container: {:?}", r);
                                             break;
                                         }
@@ -682,9 +670,10 @@ pub fn creep_loop() {
                                         break;
                                     }
 
-                                    Structure::Storage(storage) => {
-                                        let r = creep.withdraw_all(storage, *resource_type);
-                                        if r != ReturnCode::Ok {
+                                    StructureObject::StructureStorage(storage) => {
+                                        if let Err(r) =
+                                            creep.withdraw(storage, *resource_type, None)
+                                        {
                                             warn!("couldn't withdraw from storage: {:?}", r);
                                             break;
                                         }
@@ -693,21 +682,27 @@ pub fn creep_loop() {
                                         break;
                                     }
 
-                                    Structure::Terminal(terminal) => {
+                                    StructureObject::StructureTerminal(terminal) => {
                                         if harvest_kind == ResourceKind::ENERGY {
-                                            if terminal.store_of(*resource_type)
+                                            if terminal
+                                                .store()
+                                                .get_used_capacity(Some(*resource_type))
                                                 > TERMINAL_KEEP_ENERGY
                                             {
-                                                let r = creep.withdraw_amount(
+                                                if let Err(r) = creep.withdraw(
                                                     terminal,
                                                     *resource_type,
-                                                    std::cmp::min(
-                                                        terminal.store_of(*resource_type)
+                                                    Some(std::cmp::min(
+                                                        terminal
+                                                            .store()
+                                                            .get_used_capacity(Some(
+                                                                *resource_type,
+                                                            ))
                                                             - TERMINAL_KEEP_ENERGY,
-                                                        creep.store_free_capacity(None) as u32,
-                                                    ),
-                                                );
-                                                if r != ReturnCode::Ok {
+                                                        creep.store().get_free_capacity(None)
+                                                            as u32,
+                                                    )),
+                                                ) {
                                                     warn!(
                                                         "couldn't withdraw from terminal: {:?}",
                                                         r
@@ -721,9 +716,8 @@ pub fn creep_loop() {
                                         }
                                     }
 
-                                    Structure::Link(link) => {
-                                        let r = creep.withdraw_all(link, *resource_type);
-                                        if r != ReturnCode::Ok {
+                                    StructureObject::StructureLink(link) => {
+                                        if let Err(r) = creep.withdraw(link, *resource_type, None) {
                                             warn!("couldn't withdraw from link: {:?}", r);
                                             break;
                                         }
@@ -732,10 +726,11 @@ pub fn creep_loop() {
                                         break;
                                     }
 
-                                    Structure::Lab(lab) => {
+                                    StructureObject::StructureLab(lab) => {
                                         if harvest_kind == ResourceKind::MINELALS {
-                                            let r = creep.withdraw_all(lab, *resource_type);
-                                            if r != ReturnCode::Ok {
+                                            if let Err(r) =
+                                                creep.withdraw(lab, *resource_type, None)
+                                            {
                                                 warn!("couldn't withdraw from lab: {:?}", r);
                                                 break;
                                             }
@@ -760,15 +755,15 @@ pub fn creep_loop() {
             }
 
             if is_harvested == false {
-                if creep.pos() == defined_target_pos.pos() {
+                if creep.pos() == defined_target_pos {
                     debug!("already arrived, but can't harvest!!!");
                     creep.memory().del("target_pos");
                 } else {
-                    let res = creep.move_by_path_search_result(&path_search_result);
+                    let res = move_by_search_result(&creep, &path_search_result);
 
-                    if res != ReturnCode::Ok {
-                        info!("couldn't move to source: {:?}", res);
-                        if res == ReturnCode::NoPath {
+                    if let Err(e) = res {
+                        info!("couldn't move to source: {:?}", e);
+                        if e == CreepMoveToErrorCode::NoPath {
                             creep.memory().del("target_pos");
                         }
                     }
@@ -793,7 +788,7 @@ pub fn creep_loop() {
             let sources = &creep
                 .room()
                 .expect("room is not visible to you")
-                .find(find::SOURCES_ACTIVE);
+                .find(find::SOURCES_ACTIVE, None);
 
             let mut is_finished = false;
 
@@ -805,21 +800,21 @@ pub fn creep_loop() {
 
             if flee_count <= 0 {
                 for source in sources.iter() {
-                    if creep.pos().is_near_to(source) {
+                    if creep.pos().is_near_to(source.pos()) {
                         info!("fleeing from source!!");
 
                         let result = find_flee_path_from_active_source(&creep);
                         debug!(
                             "fleeing from source!!:{},{},{:?}",
-                            result.ops,
-                            result.cost,
-                            result.load_local_path()
+                            result.ops(),
+                            result.cost(),
+                            result.path()
                         );
 
-                        let res = creep.move_by_path_search_result(&result);
+                        let res = move_by_search_result(&creep, &result);
                         debug!("fleeing from source!!:{:?}", res);
 
-                        if res == ReturnCode::Ok {
+                        if res.is_ok() {
                             creep.memory().set("fleeing_count", 5);
                             is_finished = true;
                         }
@@ -878,17 +873,18 @@ pub fn creep_loop() {
     }
 
     // check number of each type creeps.
-    screeps::memory::root().set("num_upgrader", num_upgrader);
-    screeps::memory::root().set("num_builder", num_builder);
-    screeps::memory::root().set("num_harvester", num_harvester);
-    screeps::memory::root().set("num_harvester_spawn", num_harvester_spawn);
-    screeps::memory::root().set("num_harvester_mineral", num_harvester_mineral);
-    screeps::memory::root().set("num_carrier_mineral", num_carrier_mineral);
-    screeps::memory::root().set("num_repairer", num_repairer);
+    let root = mem::root();
+    root.set("num_upgrader", num_upgrader);
+    root.set("num_builder", num_builder);
+    root.set("num_harvester", num_harvester);
+    root.set("num_harvester_spawn", num_harvester_spawn);
+    root.set("num_harvester_mineral", num_harvester_mineral);
+    root.set("num_carrier_mineral", num_carrier_mineral);
+    root.set("num_repairer", num_repairer);
 
-    screeps::memory::root().set("opt_num_attackable_short", opt_num_attackable_short);
-    screeps::memory::root().set("opt_num_attackable_long", opt_num_attackable_long);
+    root.set("opt_num_attackable_short", opt_num_attackable_short);
+    root.set("opt_num_attackable_long", opt_num_attackable_long);
 
-    screeps::memory::root().set("total_num", screeps::game::creeps::values().len() as i32);
-    screeps::memory::root().set("cap_worker_carry", cap_worker_carry as i32);
+    root.set("total_num", total_creeps as i32);
+    root.set("cap_worker_carry", cap_worker_carry as i32);
 }

@@ -1,18 +1,17 @@
 use crate::constants::*;
 use log::*;
-use screeps::constants::find::*;
 use screeps::constants::*;
-use screeps::local::Position;
-use screeps::local::RoomName;
-use screeps::objects::{HasPosition, Resource};
-use screeps::SharedCreepProperties;
-use screeps::{
-    game, pathfinder::*, ConstructionSite, HasStore, LookResult, RoomObjectProperties,
-    RoomPosition, Source, Structure, StructureProperties,
+use screeps::enums::StructureObject;
+use screeps::local::{Position, RoomName, RoomXY};
+use screeps::objects::{ConstructionSite, Resource, RoomPosition, Source};
+use screeps::pathfinder::{
+    search, search_many, MultiRoomCostResult, SearchGoal, SearchOptions, SearchResults,
 };
+use screeps::prelude::*;
+use screeps::look::LookResult;
+use screeps::{game, CostMatrix, LocalCostMatrix};
 
 use std::cmp::*;
-use std::collections::HashSet;
 use std::{collections::HashMap, u32, u8};
 
 use lazy_static::lazy_static;
@@ -29,12 +28,6 @@ type StructureHpAverage = HashMap<RoomName, u128>;
 type ConstructionProgressMin = HashMap<RoomName, u128>;
 type StructureHpMin = HashMap<RoomName, u128>;
 
-type RoomHashSet = HashSet<RoomName>;
-
-struct GlobalInitFlag {
-    init_flag: bool,
-}
-
 lazy_static! {
     static ref MAP_CACHE: RwLock<Data> = RwLock::new(HashMap::new());
     static ref CONSTRUCTION_PROGRESS_AVERAGE_CACHE: RwLock<ConstructionProgressAverage> =
@@ -43,6 +36,64 @@ lazy_static! {
     static ref CONSTRUCTION_PROGRESS_MIN_CACHE: RwLock<ConstructionProgressMin> =
         RwLock::new(HashMap::new());
     static ref STRUCTURE_HP_MIN_CACHE: RwLock<StructureHpMin> = RwLock::new(HashMap::new());
+}
+
+/// 0.23 で消えた `creep.move_by_path_search_result()` の代替。
+/// path 上の現在位置から次の一歩へ move する。
+pub fn move_by_search_result(
+    creep: &screeps::objects::Creep,
+    res: &SearchResults,
+) -> Result<(), screeps::action_error_codes::CreepMoveToErrorCode> {
+    let path = res.path();
+    let pos = creep.pos();
+
+    let next = match path.iter().position(|p| *p == pos) {
+        Some(i) if i + 1 < path.len() => path[i + 1],
+        Some(_) => return Ok(()), // 既に終点にいる.
+        None => match path.first() {
+            Some(p) => *p,
+            None => return Err(screeps::action_error_codes::CreepMoveToErrorCode::NoPath),
+        },
+    };
+
+    creep.move_to(next)
+}
+
+fn xy(x: u8, y: u8) -> RoomXY {
+    RoomXY::checked_new(x, y).expect("coordinate out of range")
+}
+
+/// creep の現在室 + 見えている他室から `find` した結果を連結して返す.
+/// find 定数は Copy ではないためクロージャで都度生成する.
+fn find_all_rooms<T>(
+    creep: &screeps::objects::Creep,
+    make_ty: impl Fn() -> T,
+) -> Vec<T::Item>
+where
+    T: find::FindConstant,
+{
+    let home = creep.room().expect("room is not visible to you");
+    let mut item_list = home.find(make_ty(), None);
+
+    for room_item in game::rooms().values() {
+        if room_item.name() != home.name() {
+            item_list.extend(room_item.find(make_ty(), None));
+        }
+    }
+
+    item_list
+}
+
+fn default_search_options() -> SearchOptions<fn(RoomName) -> MultiRoomCostResult> {
+    SearchOptions::new(calc_room_cost as fn(RoomName) -> MultiRoomCostResult)
+        .plain_cost(2)
+        .swamp_cost(10)
+}
+
+fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
+    list.iter()
+        .map(|(item, range)| SearchGoal::new(item.pos(), *range))
+        .collect()
 }
 
 pub fn clear_init_flag() {
@@ -77,12 +128,12 @@ pub fn calc_average(room_name: &RoomName) {
     let mut construction_progress_min = CONSTRUCTION_PROGRESS_MIN_CACHE.write().unwrap();
     let mut structure_hp_min = STRUCTURE_HP_MIN_CACHE.write().unwrap();
 
-    let room = screeps::game::rooms::get(*room_name);
+    let room = game::rooms().get(*room_name);
 
     match room {
         Some(room_obj) => {
-            let structures = room_obj.find(find::STRUCTURES);
-            let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES);
+            let structures = room_obj.find(find::STRUCTURES, None);
+            let construction_sites = room_obj.find(find::MY_CONSTRUCTION_SITES, None);
 
             let mut total_hp: u128 = 0;
             let mut hp_min: u128 = 0;
@@ -259,8 +310,8 @@ pub fn get_construction_progress_average(room_name: &RoomName) -> (u128, u128) {
     return (0, 0);
 }
 
-fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
-    let room = screeps::game::rooms::get(room_name);
+fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult {
+    let room = game::rooms().get(room_name);
     let mut cost_matrix = LocalCostMatrix::default();
     let mut is_cache_used = false;
 
@@ -285,13 +336,13 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
     if is_cache_used == false {
         match room {
             Some(room_obj) => {
-                let structures = room_obj.find(find::STRUCTURES);
+                let structures = room_obj.find(find::STRUCTURES, None);
 
                 for chk_struct in structures {
                     // Roadのコストをさげる.
                     if chk_struct.structure_type() == StructureType::Road {
                         // Favor roads over plain tiles
-                        cost_matrix.set(chk_struct.pos().x() as u8, chk_struct.pos().y() as u8, 1);
+                        cost_matrix.set(chk_struct.pos().xy(), 1);
 
                     // 通行不能なStructureはブロック.
                     } else if chk_struct.structure_type() != StructureType::Container
@@ -299,69 +350,55 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                             || check_my_structure(&chk_struct) == false)
                     {
                         // Can't walk through non-walkable buildings
-                        cost_matrix.set(
-                            chk_struct.pos().x() as u8,
-                            chk_struct.pos().y() as u8,
-                            0xff,
-                        );
+                        cost_matrix.set(chk_struct.pos().xy(), 0xff);
                     }
                 }
 
                 // ConstructionSiteの通行不可なものをマーク.
-                let construction_sites = room_obj.find(MY_CONSTRUCTION_SITES);
+                let construction_sites = room_obj.find(find::MY_CONSTRUCTION_SITES, None);
                 for construction_site in construction_sites {
                     if construction_site.structure_type() != StructureType::Road
                         && construction_site.structure_type() != StructureType::Container
                         && construction_site.structure_type() != StructureType::Rampart
                     {
                         // Can't walk through non-walkable construction sites.
-                        cost_matrix.set(
-                            construction_site.pos().x() as u8,
-                            construction_site.pos().y() as u8,
-                            0xff,
-                        );
+                        cost_matrix.set(construction_site.pos().xy(), 0xff);
                     }
                 }
 
                 // active sourceの周辺はコストをあげる.
-                let item_list = room_obj.find(SOURCES_ACTIVE);
+                let item_list = room_obj.find(find::SOURCES_ACTIVE, None);
 
                 for chk_item in item_list.iter() {
                     for x_pos_offset in 0..=2 {
                         for y_pos_offset in 0..=2 {
                             let new_x_pos: i8 = min(
-                                max(chk_item.pos().x() as i8 + x_pos_offset - 1, 0),
+                                max(chk_item.pos().x().u8() as i8 + x_pos_offset - 1, 0),
                                 ROOM_SIZE_X as i8 - 1,
                             );
                             let new_y_pos: i8 = min(
-                                max(chk_item.pos().y() as i8 + y_pos_offset - 1, 0),
+                                max(chk_item.pos().y().u8() as i8 + y_pos_offset - 1, 0),
                                 ROOM_SIZE_Y as i8 - 1,
                             );
 
-                            let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8);
+                            let new_xy = xy(new_x_pos as u8, new_y_pos as u8);
+                            let cur_cost = cost_matrix.get(new_xy);
                             // すでに通行不可としてマークされているマスは触らない.
                             if cur_cost < 0xff {
-                                if room_obj
-                                    .get_terrain()
-                                    .get(new_x_pos as u32, new_y_pos as u32)
+                                if room_obj.get_terrain().get(new_x_pos as u8, new_y_pos as u8)
                                     != Terrain::Wall
                                 {
                                     let new_cost = 11;
-                                    cost_matrix.set(new_x_pos as u8, new_y_pos as u8, new_cost);
-                                } else if Position::new(
-                                    new_x_pos as u32,
-                                    new_y_pos as u32,
-                                    room_name,
-                                )
-                                .look_for(look::STRUCTURES)
-                                .iter()
-                                .filter(|&s| s.structure_type() == StructureType::Road)
-                                .collect::<Vec<_>>()
-                                .len()
+                                    cost_matrix.set(new_xy, new_cost);
+                                } else if room_obj
+                                    .look_for_at_xy(look::STRUCTURES, new_x_pos as u8, new_y_pos as u8)
+                                    .iter()
+                                    .filter(|s| s.structure_type() == StructureType::Road)
+                                    .count()
                                     > 0
                                 {
                                     //Road かつ Wall.
-                                    cost_matrix.set(new_x_pos as u8, new_y_pos as u8, 2);
+                                    cost_matrix.set(new_xy, 2);
                                 }
                             }
                         }
@@ -369,18 +406,18 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                 }
 
                 // 自分のものかどうかを問わず、creepのいるマスも通行不可として扱う.
-                let creeps = room_obj.find(find::CREEPS);
+                let creeps = room_obj.find(find::CREEPS, None);
                 // Avoid creeps in the room
                 for creep in creeps {
-                    cost_matrix.set(creep.pos().x() as u8, creep.pos().y() as u8, 0xff);
+                    cost_matrix.set(creep.pos().xy(), 0xff);
 
                     // enemyの射程圏内は、Rampartが無い限りコストをあげる.
                     if creep.my() == false {
                         let mut enemy_range = 1;
 
                         for body_part in creep.body() {
-                            if body_part.hits > 0 {
-                                match body_part.part {
+                            if body_part.hits() > 0 {
+                                match body_part.part() {
                                     Part::Attack => {
                                         enemy_range = 1;
                                     }
@@ -399,78 +436,61 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
                         for x_pos_offset in 0..=enemy_range {
                             for y_pos_offset in 0..=enemy_range {
                                 let new_x_pos: i8 = min(
-                                    max(creep.pos().x() as i8 + x_pos_offset - enemy_range, 0),
+                                    max(
+                                        creep.pos().x().u8() as i8 + x_pos_offset - enemy_range,
+                                        0,
+                                    ),
                                     ROOM_SIZE_X as i8 - 1,
                                 );
                                 let new_y_pos: i8 = min(
-                                    max(creep.pos().y() as i8 + y_pos_offset - enemy_range, 0),
+                                    max(
+                                        creep.pos().y().u8() as i8 + y_pos_offset - enemy_range,
+                                        0,
+                                    ),
                                     ROOM_SIZE_Y as i8 - 1,
                                 );
 
-                                let cur_cost = cost_matrix.get(new_x_pos as u8, new_y_pos as u8);
+                                let new_xy = xy(new_x_pos as u8, new_y_pos as u8);
+                                let cur_cost = cost_matrix.get(new_xy);
                                 // すでに通行不可としてマークされているマスは触らない.
                                 if cur_cost < 0xff {
-                                    if room_obj
-                                        .get_terrain()
-                                        .get(new_x_pos as u32, new_y_pos as u32)
-                                        != Terrain::Wall
-                                    {
-                                        if Position::new(
-                                            new_x_pos as u32,
-                                            new_y_pos as u32,
-                                            room_name,
+                                    let has_my_rampart = room_obj
+                                        .look_for_at_xy(
+                                            look::STRUCTURES,
+                                            new_x_pos as u8,
+                                            new_y_pos as u8,
                                         )
-                                        .look_for(look::STRUCTURES)
                                         .iter()
-                                        .filter(|&s| {
+                                        .filter(|s| {
                                             s.structure_type() == StructureType::Rampart
-                                                && s.as_owned().map(|os| os.my()).unwrap_or(false)
+                                                && s.as_owned()
+                                                    .map(|os| os.my())
+                                                    .unwrap_or(false)
                                                     == true
                                         })
-                                        .collect::<Vec<_>>()
-                                        .len()
-                                            <= 0
-                                        {
-                                            cost_matrix.set(
-                                                new_x_pos as u8,
-                                                new_y_pos as u8,
-                                                cur_cost + 10,
-                                            );
+                                        .count()
+                                        > 0;
+
+                                    if room_obj.get_terrain().get(new_x_pos as u8, new_y_pos as u8)
+                                        != Terrain::Wall
+                                    {
+                                        if !has_my_rampart {
+                                            cost_matrix.set(new_xy, cur_cost + 10);
                                         }
-                                    } else if Position::new(
-                                        new_x_pos as u32,
-                                        new_y_pos as u32,
-                                        room_name,
-                                    )
-                                    .look_for(look::STRUCTURES)
-                                    .iter()
-                                    .filter(|&s| s.structure_type() == StructureType::Road)
-                                    .collect::<Vec<_>>()
-                                    .len()
+                                    } else if room_obj
+                                        .look_for_at_xy(
+                                            look::STRUCTURES,
+                                            new_x_pos as u8,
+                                            new_y_pos as u8,
+                                        )
+                                        .iter()
+                                        .filter(|s| s.structure_type() == StructureType::Road)
+                                        .count()
                                         > 0
                                     {
                                         //Road かつ Wall.
-                                        if Position::new(
-                                            new_x_pos as u32,
-                                            new_y_pos as u32,
-                                            room_name,
-                                        )
-                                        .look_for(look::STRUCTURES)
-                                        .iter()
-                                        .filter(|&s| {
-                                            s.structure_type() == StructureType::Rampart
-                                                && s.as_owned().map(|os| os.my()).unwrap_or(false)
-                                                    == true
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .len()
-                                            <= 0
-                                        {
-                                            cost_matrix.set(
-                                                new_x_pos as u8,
-                                                new_y_pos as u8,
-                                                cur_cost + 10,
-                                            );
+                                        if !has_my_rampart {
+                                            cost_matrix.set(new_xy, cur_cost + 10);
                                         }
                                     }
                                 }
@@ -491,12 +511,12 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult<'static> {
         }
     }
 
-    let room_cost_result = MultiRoomCostResult::CostMatrix(cost_matrix.upload());
+    let room_cost_result = MultiRoomCostResult::CostMatrix(CostMatrix::from(cost_matrix));
     return room_cost_result;
 }
 
 pub fn check_walkable(position: &RoomPosition) -> bool {
-    let chk_room = screeps::game::rooms::get(position.room_name());
+    let chk_room = game::rooms().get(position.room_name());
 
     if let Some(room) = chk_room {
         let objects = room.look_at(position);
@@ -514,6 +534,7 @@ pub fn check_walkable(position: &RoomPosition) -> bool {
                 }
 
                 LookResult::Structure(structure) => {
+                    let structure: StructureObject = structure.into();
                     if structure.structure_type() != StructureType::Container
                         && (structure.structure_type() != StructureType::Rampart
                             || check_my_structure(&structure) == false)
@@ -532,7 +553,7 @@ pub fn check_walkable(position: &RoomPosition) -> bool {
     return true;
 }
 
-pub fn check_my_structure(structure: &screeps::objects::Structure) -> bool {
+pub fn check_my_structure(structure: &StructureObject) -> bool {
     match structure.as_owned() {
         Some(my_structure) => {
             return my_structure.my();
@@ -546,7 +567,7 @@ pub fn check_my_structure(structure: &screeps::objects::Structure) -> bool {
 }
 
 pub fn check_transferable(
-    structure: &screeps::objects::Structure,
+    structure: &StructureObject,
     resource_type: &ResourceType,
     capacity_rate: Option<f64>,
 ) -> bool {
@@ -560,8 +581,8 @@ pub fn check_transferable(
                 Some(_transf) => {
                     match structure.as_has_store() {
                         Some(has_store) => {
-                            if has_store.store_free_capacity(Some(*resource_type))
-                                > (has_store.store_capacity(Some(*resource_type)) as f64
+                            if has_store.store().get_free_capacity(Some(*resource_type))
+                                > (has_store.store().get_capacity(Some(*resource_type)) as f64
                                     * capacity_rate.unwrap_or(0 as f64))
                                     as i32
                             {
@@ -586,7 +607,7 @@ pub fn check_transferable(
                 Some(_transf) => {
                     match structure.as_has_store() {
                         Some(has_store) => {
-                            if has_store.store_free_capacity(Some(*resource_type)) > 0 {
+                            if has_store.store().get_free_capacity(Some(*resource_type)) > 0 {
                                 return true;
                             }
                         }
@@ -607,7 +628,7 @@ pub fn check_transferable(
     return false;
 }
 
-pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
+pub fn check_repairable(structure: &StructureObject) -> bool {
     match structure.as_owned() {
         Some(my_structure) => {
             if my_structure.my() == false {
@@ -624,7 +645,7 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -640,7 +661,7 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -648,7 +669,7 @@ pub fn check_repairable(structure: &screeps::objects::Structure) -> bool {
     return false;
 }
 
-pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32> {
+pub fn get_repairable_hp(structure: &StructureObject) -> Option<u32> {
     match structure.as_owned() {
         Some(my_structure) => {
             if my_structure.my() == false {
@@ -665,7 +686,7 @@ pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32>
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -681,7 +702,7 @@ pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32>
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -689,8 +710,59 @@ pub fn get_repairable_hp(structure: &screeps::objects::Structure) -> Option<u32>
     return None;
 }
 
-pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u128> {
-    let room_obj = structure.room().expect("room is not visible to you");
+fn live_tickcount_from_kind(
+    structure: &StructureObject,
+    attackable_hits: u32,
+    this_terrain: Terrain,
+) -> Option<u128> {
+    match structure {
+        StructureObject::StructureRoad(_road) => match this_terrain {
+            Terrain::Plain => {
+                return Some(
+                    ROAD_DECAY_TIME as u128 * (attackable_hits as u128 / ROAD_DECAY_AMOUNT as u128),
+                );
+            }
+            Terrain::Swamp => {
+                return Some(
+                    ROAD_DECAY_TIME as u128
+                        * (attackable_hits as u128
+                            / (ROAD_DECAY_AMOUNT as u128
+                                * CONSTRUCTION_COST_ROAD_SWAMP_RATIO as u128)),
+                );
+            }
+            Terrain::Wall => {
+                return Some(
+                    ROAD_DECAY_TIME as u128
+                        * (attackable_hits as u128
+                            / (ROAD_DECAY_AMOUNT as u128
+                                * CONSTRUCTION_COST_ROAD_WALL_RATIO as u128)),
+                );
+            }
+        },
+
+        StructureObject::StructureContainer(_container) => {
+            return Some(
+                CONTAINER_DECAY_TIME_OWNED as u128 * (attackable_hits as u128 / CONTAINER_DECAY as u128),
+            );
+        }
+
+        StructureObject::StructureRampart(_ramport) => {
+            return Some(
+                RAMPART_DECAY_TIME as u128 * (attackable_hits as u128 / RAMPART_DECAY_AMOUNT as u128),
+            );
+        }
+
+        _ => {}
+    }
+
+    None
+}
+
+pub fn get_live_tickcount(structure: &StructureObject) -> Option<u128> {
+    let room_obj = structure
+        .as_structure()
+        .room()
+        .expect("room is not visible to you");
 
     match structure.as_owned() {
         Some(my_structure) => {
@@ -702,54 +774,13 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                 Some(attackable) => {
                     let this_terrain = room_obj
                         .get_terrain()
-                        .get(structure.pos().x(), structure.pos().y());
+                        .get(structure.pos().x().u8(), structure.pos().y().u8());
 
-                    match structure {
-                        Structure::Road(_road) => match this_terrain {
-                            Terrain::Plain => {
-                                return Some(
-                                    ROAD_DECAY_TIME as u128
-                                        * (attackable.hits() as u128 / ROAD_DECAY_AMOUNT as u128),
-                                );
-                            }
-                            Terrain::Swamp => {
-                                return Some(
-                                    ROAD_DECAY_TIME as u128
-                                        * (attackable.hits() as u128
-                                            / (ROAD_DECAY_AMOUNT as u128
-                                                * CONSTRUCTION_COST_ROAD_SWAMP_RATIO as u128)),
-                                );
-                            }
-                            Terrain::Wall => {
-                                return Some(
-                                    ROAD_DECAY_TIME as u128
-                                        * (attackable.hits() as u128
-                                            / (ROAD_DECAY_AMOUNT as u128
-                                                * CONSTRUCTION_COST_ROAD_WALL_RATIO as u128)),
-                                );
-                            }
-                        },
-
-                        Structure::Container(_container) => {
-                            return Some(
-                                CONTAINER_DECAY_TIME_OWNED as u128
-                                    * (attackable.hits() as u128 / CONTAINER_DECAY as u128),
-                            );
-                        }
-
-                        Structure::Rampart(_ramport) => {
-                            return Some(
-                                RAMPART_DECAY_TIME as u128
-                                    * (attackable.hits() as u128 / RAMPART_DECAY_AMOUNT as u128),
-                            );
-                        }
-
-                        _ => {}
-                    }
+                    return live_tickcount_from_kind(structure, attackable.hits(), this_terrain);
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -759,54 +790,13 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
                 Some(attackable) => {
                     let this_terrain = room_obj
                         .get_terrain()
-                        .get(structure.pos().x(), structure.pos().y());
+                        .get(structure.pos().x().u8(), structure.pos().y().u8());
 
-                    match structure {
-                        Structure::Road(_road) => match this_terrain {
-                            Terrain::Plain => {
-                                return Some(
-                                    ROAD_DECAY_TIME as u128
-                                        * (attackable.hits() as u128 / ROAD_DECAY_AMOUNT as u128),
-                                );
-                            }
-                            Terrain::Swamp => {
-                                return Some(
-                                    ROAD_DECAY_TIME as u128
-                                        * (attackable.hits() as u128
-                                            / (ROAD_DECAY_AMOUNT as u128
-                                                * CONSTRUCTION_COST_ROAD_SWAMP_RATIO as u128)),
-                                );
-                            }
-                            Terrain::Wall => {
-                                return Some(
-                                    ROAD_DECAY_TIME as u128
-                                        * (attackable.hits() as u128
-                                            / (ROAD_DECAY_AMOUNT as u128
-                                                * CONSTRUCTION_COST_ROAD_WALL_RATIO as u128)),
-                                );
-                            }
-                        },
-
-                        Structure::Container(_container) => {
-                            return Some(
-                                CONTAINER_DECAY_TIME_OWNED as u128
-                                    * (attackable.hits() as u128 / CONTAINER_DECAY as u128),
-                            );
-                        }
-
-                        Structure::Rampart(_ramport) => {
-                            return Some(
-                                RAMPART_DECAY_TIME as u128
-                                    * (attackable.hits() as u128 / RAMPART_DECAY_AMOUNT as u128),
-                            );
-                        }
-
-                        _ => {}
-                    }
+                    return live_tickcount_from_kind(structure, attackable.hits(), this_terrain);
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -814,7 +804,7 @@ pub fn get_live_tickcount(structure: &screeps::objects::Structure) -> Option<u12
     return None;
 }
 
-pub fn get_hp(structure: &screeps::objects::Structure) -> Option<u32> {
+pub fn get_hp(structure: &StructureObject) -> Option<u32> {
     match structure.as_owned() {
         Some(my_structure) => {
             if my_structure.my() == false {
@@ -831,7 +821,7 @@ pub fn get_hp(structure: &screeps::objects::Structure) -> Option<u32> {
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -847,7 +837,7 @@ pub fn get_hp(structure: &screeps::objects::Structure) -> Option<u32> {
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -855,7 +845,7 @@ pub fn get_hp(structure: &screeps::objects::Structure) -> Option<u32> {
     return None;
 }
 
-pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) -> bool {
+pub fn check_repairable_hp(structure: &StructureObject, hp_th: u32) -> bool {
     match structure.as_owned() {
         Some(my_structure) => {
             if my_structure.my() == false {
@@ -872,7 +862,7 @@ pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) 
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
@@ -888,21 +878,22 @@ pub fn check_repairable_hp(structure: &screeps::objects::Structure, hp_th: u32) 
                 }
 
                 None => {
-                    // my_struct is not transferable.
+                    // my_struct is not attackable.
                 }
             }
         }
     }
     return false;
 }
+
 pub fn check_stored(
-    structure: &screeps::objects::Structure,
+    structure: &StructureObject,
     resource_type: &ResourceType,
     keep_amount: u32,
 ) -> bool {
     match structure.as_has_store() {
         Some(storage) => {
-            if storage.store_of(*resource_type) > keep_amount {
+            if storage.store().get_used_capacity(Some(*resource_type)) > keep_amount {
                 return true;
             }
         }
@@ -1040,24 +1031,10 @@ pub fn find_nearest_transfarable_item(
     is_except_storages: &bool,
     is_except_terminal: &bool,
     is_except_link: &bool,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
+    let mut find_item_list = Vec::<(StructureObject, u32)>::new();
     let resource_type_list = make_resoucetype_list(resource_kind);
 
     for chk_item in item_list.iter() {
@@ -1097,7 +1074,7 @@ pub fn find_nearest_transfarable_item(
         }
 
         for resource_type in resource_type_list.iter() {
-            if creep.store_of(*resource_type) > 0 as u32 {
+            if creep.store().get_used_capacity(Some(*resource_type)) > 0 as u32 {
                 if check_transferable(chk_item, resource_type, None) {
                     find_item_list.push((chk_item.clone(), dist));
                     break;
@@ -1106,35 +1083,22 @@ pub fn find_nearest_transfarable_item(
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_transfarable_terminal(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
+    let mut find_item_list = Vec::<(StructureObject, u32)>::new();
     let resource_type_list = make_resoucetype_list(resource_kind);
 
     for chk_item in item_list.iter() {
@@ -1149,7 +1113,7 @@ pub fn find_nearest_transfarable_terminal(
         }
 
         for resource_type in resource_type_list.iter() {
-            if creep.store_of(*resource_type) > 0 as u32 {
+            if creep.store().get_used_capacity(Some(*resource_type)) > 0 as u32 {
                 if check_transferable(chk_item, resource_type, None) {
                     find_item_list.push((chk_item.clone(), dist));
                     break;
@@ -1158,90 +1122,65 @@ pub fn find_nearest_transfarable_terminal(
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_repairable_item_hp(
     creep: &screeps::objects::Creep,
     threshold: u32,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
+    let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
     for chk_item in item_list {
-        if check_repairable(chk_item) {
-            if get_hp(chk_item).unwrap_or(0) <= threshold {
+        if check_repairable(&chk_item) {
+            if get_hp(&chk_item).unwrap_or(0) <= threshold {
                 find_item_list.push((chk_item.clone(), 3));
             }
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_repairable_item_except_wall_dying(
     creep: &screeps::objects::Creep,
     threshold: u128,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
+    let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
     for chk_item in item_list {
         if chk_item.structure_type() != StructureType::Wall {
-            if check_repairable(chk_item) {
-                if get_live_tickcount(chk_item).unwrap_or(10000) as u128 <= threshold {
+            if check_repairable(&chk_item) {
+                if get_live_tickcount(&chk_item).unwrap_or(10000) as u128 <= threshold {
                     find_item_list.push((chk_item.clone(), 3));
                 }
             }
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_transferable_structure(
@@ -1250,61 +1189,33 @@ pub fn find_nearest_transferable_structure(
     resource_type: &ResourceType,
     max_cost: Option<f64>,
     capacity_rate: Option<f64>,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES);
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
+    let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
     for chk_item in item_list {
         if chk_item.structure_type() == *structure_type {
-            if check_transferable(chk_item, resource_type, capacity_rate) {
+            if check_transferable(&chk_item, resource_type, capacity_rate) {
                 find_item_list.push((chk_item.clone(), 1));
             }
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10)
-        .max_cost(max_cost.unwrap_or(f64::INFINITY));
+    let option = default_search_options().max_cost(max_cost.unwrap_or(f64::INFINITY));
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_construction_site(
     creep: &screeps::objects::Creep,
     threshold: u32,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(MY_CONSTRUCTION_SITES);
-
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::MY_CONSTRUCTION_SITES);
-                item_list.extend(local_list);
-            }
-        }
-    }
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::MY_CONSTRUCTION_SITES);
 
     let mut find_item_list = Vec::<(ConstructionSite, u32)>::new();
 
@@ -1314,114 +1225,55 @@ pub fn find_nearest_construction_site(
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_active_source(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
     is_2nd_check: bool,
-) -> screeps::pathfinder::SearchResults {
+) -> SearchResults {
     let mut find_item_list = Vec::<(Position, u32)>::new();
     let resource_type_list = make_resoucetype_list(&resource_kind);
 
     if is_2nd_check == false {
         // dropped resource.
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(DROPPED_RESOURCES);
-
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::DROPPED_RESOURCES);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::DROPPED_RESOURCES);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
                 if chk_item.resource_type() == *resource {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                    find_item_list.push((chk_item.pos(), 1));
                     break;
                 }
             }
         }
 
         // TOMBSTONES.
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(find::TOMBSTONES);
-
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::TOMBSTONES);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::TOMBSTONES);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
-                if chk_item.store_of(*resource) > 0 {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                if chk_item.store().get_used_capacity(Some(*resource)) > 0 {
+                    find_item_list.push((chk_item.pos(), 1));
                     break;
                 }
             }
         }
 
         // RUINs.
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(find::RUINS);
-
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::RUINS);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::RUINS);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
-                if chk_item.store_of(*resource) > 0 {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                if chk_item.store().get_used_capacity(Some(*resource)) > 0 {
+                    find_item_list.push((chk_item.pos(), 1));
                     break;
                 }
             }
@@ -1431,56 +1283,20 @@ pub fn find_nearest_active_source(
     if find_item_list.len() <= 0 {
         if *resource_kind == ResourceKind::ENERGY {
             // active source.
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(SOURCES_ACTIVE);
-
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::SOURCES_ACTIVE);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::SOURCES_ACTIVE);
 
             for chk_item in item_list.iter() {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
-
-                find_item_list.push((object.clone(), 1));
+                find_item_list.push((chk_item.pos(), 1));
             }
         } else if *resource_kind == ResourceKind::MINELALS {
             // minerals.
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::MINERALS);
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::MINERALS);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::MINERALS);
 
             for chk_item in item_list.iter() {
                 let look_result = creep.room().expect("I can't see").look_for_at_xy(
                     look::STRUCTURES,
-                    chk_item.pos().x(),
-                    chk_item.pos().y(),
+                    chk_item.pos().x().u8(),
+                    chk_item.pos().y().u8(),
                 );
 
                 let mut is_extractor_equited = false;
@@ -1495,180 +1311,79 @@ pub fn find_nearest_active_source(
                 }
 
                 if is_extractor_equited {
-                    let mut object: Position = creep.pos();
-
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                    find_item_list.push((chk_item.pos(), 1));
                 }
             }
         } else if *resource_kind == ResourceKind::COMMODITIES {
             // comodities.
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::DEPOSITS);
-
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::DEPOSITS);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::DEPOSITS);
 
             for chk_item in item_list.iter() {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
-
-                find_item_list.push((object.clone(), 1));
+                find_item_list.push((chk_item.pos(), 1));
             }
         } else {
             // power.
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::STRUCTURES);
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::STRUCTURES);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
             for chk_item in item_list.iter() {
                 if chk_item.structure_type() == StructureType::PowerBank {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                    find_item_list.push((chk_item.pos(), 1));
                 }
             }
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        find_item_list
+            .into_iter()
+            .map(|(pos, range)| SearchGoal::new(pos, range)),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_stored_source(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
     is_2nd_check: bool,
-) -> screeps::pathfinder::SearchResults {
+) -> SearchResults {
     let mut find_item_list = Vec::<(Position, u32)>::new();
     let resource_type_list = make_resoucetype_list(&resource_kind);
 
     if is_2nd_check == false {
         // dropped resource.
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(DROPPED_RESOURCES);
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::DROPPED_RESOURCES);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::DROPPED_RESOURCES);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
                 if chk_item.resource_type() == *resource {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                    find_item_list.push((chk_item.pos(), 1));
                     break;
                 }
             }
         }
 
         // TOMBSTONES.
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(find::TOMBSTONES);
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::TOMBSTONES);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::TOMBSTONES);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
-                if chk_item.store_of(*resource) > 0 {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                if chk_item.store().get_used_capacity(Some(*resource)) > 0 {
+                    find_item_list.push((chk_item.pos(), 1));
                     break;
                 }
             }
         }
 
         // RUINs.
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(find::RUINS);
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::RUINS);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::RUINS);
 
         for chk_item in item_list.iter() {
             for resource in resource_type_list.iter() {
-                if chk_item.store_of(*resource) > 0 {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                if chk_item.store().get_used_capacity(Some(*resource)) > 0 {
+                    find_item_list.push((chk_item.pos(), 1));
                     break;
                 }
             }
@@ -1676,21 +1391,7 @@ pub fn find_nearest_stored_source(
     }
 
     if find_item_list.len() <= 0 {
-        let item_list = &mut creep
-            .room()
-            .expect("room is not visible to you")
-            .find(find::STRUCTURES);
-        {
-            let room_list = game::rooms::values();
-
-            for room_item in room_list.iter() {
-                if room_item.name() != *(&creep.room().expect("room is not visible to you").name())
-                {
-                    let local_list = room_item.find(find::STRUCTURES);
-                    item_list.extend(local_list);
-                }
-            }
-        }
+        let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
         for chk_item in item_list.iter() {
             if chk_item.structure_type() == StructureType::Container
@@ -1711,17 +1412,12 @@ pub fn find_nearest_stored_source(
                         }
 
                         if check_stored(chk_item, resource_type, keep_amount) {
-                            let mut object: Position = creep.pos();
-                            object.set_x(chk_item.pos().x());
-                            object.set_y(chk_item.pos().y());
-                            object.set_room_name(chk_item.room().unwrap().name());
-
                             let mut dist = 1;
                             if chk_item.structure_type() == StructureType::Container {
                                 dist = 0;
                             }
 
-                            find_item_list.push((object.clone(), dist));
+                            find_item_list.push((chk_item.pos(), dist));
                             break;
                         }
                     }
@@ -1730,74 +1426,43 @@ pub fn find_nearest_stored_source(
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        find_item_list
+            .into_iter()
+            .map(|(pos, range)| SearchGoal::new(pos, range)),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_exhausted_source(
     creep: &screeps::objects::Creep,
     harvest_kind: &ResourceKind,
-) -> screeps::pathfinder::SearchResults {
+) -> SearchResults {
     let mut find_item_list = Vec::<(Position, u32)>::new();
 
     match harvest_kind {
         ResourceKind::ENERGY => {
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::SOURCES);
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::SOURCES);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::SOURCES);
 
             for chk_item in item_list.iter() {
-                if (chk_item.energy() <= 0) && (chk_item.ticks_to_regeneration() < 50) {
-                    let mut object: Position = creep.pos();
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                if (chk_item.energy() <= 0) && (chk_item.ticks_to_regeneration().unwrap_or(0) < 50)
+                {
+                    find_item_list.push((chk_item.pos(), 1));
                 }
             }
         }
 
         ResourceKind::MINELALS => {
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::MINERALS);
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::MINERALS);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::MINERALS);
 
             for chk_item in item_list.iter() {
                 let look_result = creep.room().expect("I can't see").look_for_at_xy(
                     look::STRUCTURES,
-                    chk_item.pos().x(),
-                    chk_item.pos().y(),
+                    chk_item.pos().x().u8(),
+                    chk_item.pos().y().u8(),
                 );
 
                 let mut is_extractor_equited = false;
@@ -1812,72 +1477,36 @@ pub fn find_nearest_exhausted_source(
                 }
 
                 if is_extractor_equited {
-                    let mut object: Position = creep.pos();
-
-                    object.set_x(chk_item.pos().x());
-                    object.set_y(chk_item.pos().y());
-                    object.set_room_name(chk_item.room().unwrap().name());
-
-                    find_item_list.push((object.clone(), 1));
+                    find_item_list.push((chk_item.pos(), 1));
                 }
             }
         }
 
         _ => {
-            let item_list = &mut creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::SOURCES);
-            {
-                let room_list = game::rooms::values();
-
-                for room_item in room_list.iter() {
-                    if room_item.name()
-                        != *(&creep.room().expect("room is not visible to you").name())
-                    {
-                        let local_list = room_item.find(find::SOURCES);
-                        item_list.extend(local_list);
-                    }
-                }
-            }
+            let item_list = find_all_rooms(creep, || find::SOURCES);
 
             for chk_item in item_list.iter() {
-                let mut object: Position = creep.pos();
-                object.set_x(chk_item.pos().x());
-                object.set_y(chk_item.pos().y());
-                object.set_room_name(chk_item.room().unwrap().name());
-
-                find_item_list.push((object.clone(), 1));
+                find_item_list.push((chk_item.pos(), 1));
             }
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        find_item_list
+            .into_iter()
+            .map(|(pos, range)| SearchGoal::new(pos, range)),
+        Some(option),
+    );
 }
 
 pub fn find_nearest_dropped_resource(
     creep: &screeps::objects::Creep,
     resource_kind: ResourceKind,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(DROPPED_RESOURCES);
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::DROPPED_RESOURCES);
-                item_list.extend(local_list);
-            }
-        }
-    }
+) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::DROPPED_RESOURCES);
 
     let mut find_item_list = Vec::<(Resource, u32)>::new();
     let resource_type_list = make_resoucetype_list(&resource_kind);
@@ -1891,31 +1520,17 @@ pub fn find_nearest_dropped_resource(
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
-pub fn find_flee_path_from_active_source(
-    creep: &screeps::objects::Creep,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(SOURCES_ACTIVE);
-    {
-        let room_list = game::rooms::values();
-
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::SOURCES_ACTIVE);
-                item_list.extend(local_list);
-            }
-        }
-    }
+pub fn find_flee_path_from_active_source(creep: &screeps::objects::Creep) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::SOURCES_ACTIVE);
 
     let mut find_item_list = Vec::<(Source, u32)>::new();
 
@@ -1923,23 +1538,20 @@ pub fn find_flee_path_from_active_source(
         find_item_list.push((chk_item.clone(), 3));
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10)
-        .flee(true);
+    let option = default_search_options().flee(true);
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
-pub fn find_nearest_enemy(
-    creep: &screeps::objects::Creep,
-    range: u32,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &creep
+pub fn find_nearest_enemy(creep: &screeps::objects::Creep, range: u32) -> SearchResults {
+    let item_list = creep
         .room()
         .expect("room is not visible to you")
-        .find(HOSTILE_CREEPS);
+        .find(find::HOSTILE_CREEPS, None);
 
     // not nessesary to find another room hostile_creeps.
 
@@ -1949,33 +1561,19 @@ pub fn find_nearest_enemy(
         find_item_list.push((chk_item.clone(), range));
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
-pub fn find_nearest_room_controler(
-    creep: &screeps::objects::Creep,
-) -> screeps::pathfinder::SearchResults {
-    let item_list = &mut creep
-        .room()
-        .expect("room is not visible to you")
-        .find(STRUCTURES);
-    {
-        let room_list = game::rooms::values();
+pub fn find_nearest_room_controler(creep: &screeps::objects::Creep) -> SearchResults {
+    let item_list = find_all_rooms(creep, || find::STRUCTURES);
 
-        for room_item in room_list.iter() {
-            if room_item.name() != *(&creep.room().expect("room is not visible to you").name()) {
-                let local_list = room_item.find(find::STRUCTURES);
-                item_list.extend(local_list);
-            }
-        }
-    }
-
-    let mut find_item_list = Vec::<(Structure, u32)>::new();
+    let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
     for chk_item in item_list.iter() {
         if chk_item.structure_type() == StructureType::Controller {
@@ -1985,23 +1583,21 @@ pub fn find_nearest_room_controler(
         }
     }
 
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+    let option = default_search_options();
 
-    return search_many(creep, find_item_list, option);
+    return search_many(
+        creep.pos(),
+        search_goals(&find_item_list).into_iter(),
+        Some(option),
+    );
 }
 
 pub fn find_path(
     creep: &screeps::objects::Creep,
-    target_pos: &RoomPosition,
+    target_pos: &Position,
     range: u32,
-) -> screeps::pathfinder::SearchResults {
-    let option = SearchOptions::new()
-        .room_callback(calc_room_cost)
-        .plain_cost(2)
-        .swamp_cost(10);
+) -> SearchResults {
+    let option = default_search_options();
 
-    return search(creep, target_pos, range, option);
+    return search(creep.pos(), *target_pos, range, Some(option));
 }
