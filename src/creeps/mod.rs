@@ -45,7 +45,49 @@ const ROLE_REBALANCE_PER_TICK: i32 = 1;
 /// 収束しなかった。建設ラッシュ中に育ったコロニーは建設が終わっても永久に builder 過多。
 ///
 /// 目標を1箇所の関数として定義し、毎tick「目標 − 現状」の差分で配分する。
-fn role_targets(total: i32, has_terminal: bool) -> Vec<(&'static str, i32)> {
+/// ロール構成を決めるのに要る、その tick のコロニーの状況。
+pub struct ColonyState {
+    /// 見えている creep の総数。
+    pub total_creeps: i32,
+    /// ターミナルを持っているか (鉱物の搬出先)。
+    pub has_terminal: bool,
+    /// Extractor を持っているか。
+    ///
+    /// 鉱物採取には Extractor (RCL6) が要る。旧実装は creep 総数だけで
+    /// harvester_mineral を割り当てていたため、Extractor の無い部屋でも
+    /// 1体が鉱物採取に就き、採取先を見つけられないまま待機し続けていた。
+    pub has_extractor: bool,
+}
+
+impl ColonyState {
+    pub fn observe() -> Self {
+        let mut has_terminal = false;
+        let mut has_extractor = false;
+
+        for room in game::rooms().values() {
+            if room.terminal().is_some() {
+                has_terminal = true;
+            }
+            if room_structures(&room)
+                .iter()
+                .any(|s| s.structure_type() == screeps::StructureType::Extractor)
+            {
+                has_extractor = true;
+            }
+        }
+
+        Self {
+            total_creeps: game::creeps().values().count() as i32,
+            has_terminal,
+            has_extractor,
+        }
+    }
+}
+
+fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
+    let total = state.total_creeps;
+    let has_terminal = state.has_terminal;
+    let has_extractor = state.has_extractor;
     let t = total.max(1);
 
     vec![
@@ -56,11 +98,15 @@ fn role_targets(total: i32, has_terminal: bool) -> Vec<(&'static str, i32)> {
         (ROLE_UPGRADER, t / 10 + 1),
         (ROLE_BUILDER, t / 6),
         (ROLE_REPAIRER, t / 6),
-        // 鉱物系は艦隊に余裕が出てから。
-        (ROLE_HARVESTER_MINERAL, if t > 10 { 1 } else { 0 }),
+        // 鉱物系は Extractor があって初めて成立する。無い部屋で割り当てても
+        // 採取先が存在せず、その creep は待機し続けるだけになる。
+        (
+            ROLE_HARVESTER_MINERAL,
+            if has_extractor && t > 10 { 1 } else { 0 },
+        ),
         (
             ROLE_CARRIER_MINERAL,
-            if has_terminal && t > 10 { 1 } else { 0 },
+            if has_extractor && has_terminal && t > 10 { 1 } else { 0 },
         ),
     ]
 }
@@ -376,8 +422,9 @@ pub fn creep_loop() {
 
     let mut cap_worker_carry: u128 = 0;
 
-    // creep 総数は tick 内で不変なので 1 回だけ数える (JS 境界越えの節約).
-    let total_creeps = game::creeps().values().count();
+    // ロール構成の判断材料は tick 内で不変なので 1 回だけ観測する。
+    let colony = ColonyState::observe();
+    let total_creeps = colony.total_creeps as usize;
 
     for creep in game::creeps().values() {
         let name = creep.name();
@@ -440,8 +487,7 @@ pub fn creep_loop() {
     // 過剰なロールはそのまま残るので、余っているロールから足りないロールへ
     // 少しずつ移す。1 tick に動かすのは1体だけにしてハンチングを避ける。
     {
-        let has_terminal = game::rooms().values().any(|r| r.terminal().is_some());
-        let targets = role_targets(total_creeps as i32, has_terminal);
+        let targets = role_targets(&colony);
 
         let mut moved = 0;
         for (role, target) in targets.iter() {
@@ -504,11 +550,7 @@ pub fn creep_loop() {
         let attacker_kind = role_and_attacker_kind.1;
 
         if role_string == "none" {
-            let has_terminal = creep
-                .room()
-                .map(|r| r.terminal().is_some())
-                .unwrap_or(false);
-            let targets = role_targets(total_creeps as i32, has_terminal);
+            let targets = role_targets(&colony);
             role_string = pick_role(&creep, &targets, &role_counts);
 
             cmem.set("role", role_string.as_str());
