@@ -21,7 +21,8 @@ const PLANNER_INTERVAL: u32 = 20;
 
 /// 1部屋あたり同時に抱えてよい建設サイト数。
 /// 多すぎると builder が分散して1つも完成しない。
-const MAX_ACTIVE_SITES: usize = 5;
+/// source が2つある部屋で container を両方置けるだけの余裕は要る。
+const MAX_ACTIVE_SITES: usize = 6;
 
 /// 1回の計画で新規に置く上限。
 const MAX_NEW_SITES_PER_RUN: usize = 3;
