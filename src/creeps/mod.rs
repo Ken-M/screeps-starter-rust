@@ -1,21 +1,26 @@
+//! creep のロール管理とディスパッチ。
+//!
+//! ロールは「miner / hauler / worker」の3本柱 + 状況限定ロール (defender / 鉱物系)。
+//!
+//! 旧世代 (harvester / harvester_spawn が自力で source へ歩き、Memory の
+//! `harvesting` フラグと `target_pos` で採取⇄配達を往復するステートマシン) は
+//! 退役した。miner が source に張り付いて掘り、hauler が運び、worker が
+//! 建設・修理・アップグレードを担う。container が無い間も miner は地面に
+//! 落とし、hauler が拾うので、移行ギャップは無い。
+
 mod builder;
-mod harvester;
+mod defender;
 mod hauler;
 mod miner;
 mod worker;
 mod repairer;
 mod upgrader;
 
-use crate::constants::*;
 use crate::mem::{self, MemoryExt};
 use crate::util::*;
 use log::*;
-use screeps::action_error_codes::{CreepMoveByPathErrorCode, HarvestErrorCode};
-use screeps::enums::StructureObject;
-use screeps::local::Position;
-use screeps::pathfinder::SearchResults;
 use screeps::prelude::*;
-use screeps::{find, game, look, Creep, Part};
+use screeps::{game, Creep, Part};
 use std::collections::HashMap;
 
 #[derive(PartialEq, Debug)]
@@ -25,56 +30,38 @@ enum AttackerKind {
     NONE,
 }
 
-/// 採取先が1つも見つからなかったとき、次に再探索するまで待つ tick 数。
-const HARVEST_RETRY_BACKOFF: u32 = 10;
-
-/// この tick 数連続で動けなかったらスタックとみなす。
-///
-/// 当初は2にしていたが、一列で移動中に前の creep を数tick待つのは正常な渋滞で、
-/// それが全部スタック判定されてフル再探索 (全室スキャン + 経路探索3回) が
-/// 毎tick走り、creeps 区間の CPU が倍増した。本物の千日手 (押し合い) だけを
-/// 拾えるよう長めに取る。
-const STUCK_THRESHOLD: i32 = 5;
-
 pub const ROLE_MINER: &str = "miner";
 pub const ROLE_HAULER: &str = "hauler";
-pub const ROLE_HARVESTER: &str = "harvester";
-pub const ROLE_HARVESTER_SPAWN: &str = "harvester_spawn";
+pub const ROLE_WORKER: &str = "worker";
+pub const ROLE_DEFENDER: &str = "defender";
 pub const ROLE_HARVESTER_MINERAL: &str = "harvester_mineral";
 pub const ROLE_CARRIER_MINERAL: &str = "carrier_mineral";
-/// 建設・修理・アップグレードを兼ねる余剰労働力。
-/// 旧実装の builder / upgrader / repairer を統合したもの。
-pub const ROLE_WORKER: &str = "worker";
 
 /// 1 tick に配置転換してよい creep の数。
 /// 一度に動かすとハンチングするので少しずつ寄せる。
 const ROLE_REBALANCE_PER_TICK: i32 = 1;
 
-/// 目標のロール構成。優先度の高い順に並べる。
-///
-/// 旧実装は if-else の連鎖で、基準が「固定値3」「総数比」「絶対値1000」「総数13超」と
-/// バラバラだった。さらにカウンタが加算のみで既存 creep を見直さないため、分布が
-/// 「どの順序で creep が死んで生まれたか」に依存する経路依存の値になり、目標比率に
-/// 収束しなかった。建設ラッシュ中に育ったコロニーは建設が終わっても永久に builder 過多。
-///
-/// 目標を1箇所の関数として定義し、毎tick「目標 − 現状」の差分で配分する。
+/// miner の残り寿命がこれを切ったら、後継の生産を始める (先行生産)。
+/// spawn 所要 (7パーツ×3=21tick) + 職場までの歩行 (この部屋で最大約50tick、
+/// miner は MOVE 1 なので4倍遅い) + 余裕。
+pub const MINER_PRESPAWN_LEAD: u32 = 250;
+
 /// ロール構成を決めるのに要る、その tick のコロニーの状況。
 pub struct ColonyState {
     /// 見えている creep の総数。
     pub total_creeps: i32,
+    /// 自分の source の総数。
+    pub total_sources: i32,
     /// ターミナルを持っているか (鉱物の搬出先)。
     pub has_terminal: bool,
-    /// 隣に container が完成している source の数。
-    ///
-    /// 静的採掘者はこの container に住み着いて掘り続ける。container が無い source に
-    /// 置いても降ろす先が無いので、その source には採掘者を割り当てない。
-    pub sources_with_container: i32,
-    /// Extractor を持っているか。
-    ///
-    /// 鉱物採取には Extractor (RCL6) が要る。旧実装は creep 総数だけで
-    /// harvester_mineral を割り当てていたため、Extractor の無い部屋でも
-    /// 1体が鉱物採取に就き、採取先を見つけられないまま待機し続けていた。
+    /// Extractor を持っているか (鉱物採取は RCL6 の Extractor が前提)。
     pub has_extractor: bool,
+    /// 攻撃能力を持つ敵が可視範囲にいるか。
+    pub hostiles_present: bool,
+    /// 残り寿命が MINER_PRESPAWN_LEAD を切った miner の数。
+    /// この分だけ miner の目標を一時的に増やし、後継を先行生産する。
+    /// 旧個体が死ねば目標もカウントも同時に戻るので、恒常的な過剰にはならない。
+    pub miners_expiring: i32,
 }
 
 thread_local! {
@@ -90,9 +77,7 @@ pub fn clear_colony_cache() {
 
 impl ColonyState {
     /// tick 内で1回だけ観測する。
-    ///
-    /// do_spawn と creep_loop の両方が使うため、素直に呼ぶと部屋 × 構造物 ×
-    /// source の走査が 1 tick に2回走る。
+    /// do_spawn と creep_loop の両方が使うためキャッシュする。
     pub fn observe() -> std::rc::Rc<Self> {
         COLONY_CACHE.with(|cache| {
             if let Some(cached) = cache.borrow().as_ref() {
@@ -107,82 +92,95 @@ impl ColonyState {
     fn measure() -> Self {
         let mut has_terminal = false;
         let mut has_extractor = false;
-
-        let mut sources_with_container = 0;
+        let mut total_sources = 0;
+        let mut hostiles_present = false;
 
         for room in game::rooms().values() {
             if room.terminal().is_some() {
                 has_terminal = true;
             }
 
-            let structures = room_structures(&room);
-            if structures
+            if room_structures(&room)
                 .iter()
                 .any(|s| s.structure_type() == screeps::StructureType::Extractor)
             {
                 has_extractor = true;
             }
 
-            for source in room.find(find::SOURCES, None) {
-                let has_container = structures.iter().any(|s| {
-                    s.structure_type() == screeps::StructureType::Container
-                        && s.pos().is_near_to(source.pos())
+            total_sources += room.find(screeps::find::SOURCES, None).len() as i32;
+
+            if !hostiles_present {
+                hostiles_present = room_hostiles(&room).iter().any(|enemy| {
+                    enemy.body().iter().any(|p| {
+                        p.hits() > 0
+                            && matches!(
+                                p.part(),
+                                Part::Attack | Part::RangedAttack | Part::Work | Part::Heal
+                            )
+                    })
                 });
-                if has_container {
-                    sources_with_container += 1;
+            }
+        }
+
+        let mut total_creeps = 0;
+        let mut miners_expiring = 0;
+        for creep in game::creeps().values() {
+            total_creeps += 1;
+            if let Ok(Some(role)) = creep.memory().string("role") {
+                if role == ROLE_MINER {
+                    let ttl = creep.ticks_to_live().unwrap_or(u32::MAX);
+                    if ttl < MINER_PRESPAWN_LEAD {
+                        miners_expiring += 1;
+                    }
                 }
             }
         }
 
         Self {
-            total_creeps: game::creeps().values().count() as i32,
+            total_creeps,
+            total_sources,
             has_terminal,
             has_extractor,
-            sources_with_container,
+            hostiles_present,
+            miners_expiring,
         }
     }
 }
 
+/// 目標のロール構成。優先度の高い順に並べる。
+///
+/// 目標は creep 総数の比率ではなく、コロニーの構造 (source 数・敵の有無・
+/// 施設の有無) から決める。総数比だと「総数が目標を決め、目標が総数を決める」
+/// 循環になり、人口の上限が恣意的な定数に縛られる。
 pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
-    let total = state.total_creeps;
-    let has_terminal = state.has_terminal;
-    let has_extractor = state.has_extractor;
-    let t = total.max(1);
-
     vec![
-        // 静的採掘者。container のある source に1体ずつ。
-        // WORK 5個で source の再生速度と釣り合うので、それ以上は要らない。
-        (ROLE_MINER, state.sources_with_container),
-        // spawn/extension への補給は最優先。ここが切れると何も回らない。
-        (ROLE_HARVESTER_SPAWN, std::cmp::min(3, t)),
-        // 運搬者。採掘者が掘った分を運ぶ。採掘者がいて初めて意味を持つ。
-        // 往復距離が長い部屋ほど多く要るが、まずは採掘者と同数から。
-        (ROLE_HAULER, state.sources_with_container),
-        // 採取本体。採掘者が立ち上がるまでの主力で、立ち上がった後も
-        // container の無い source を拾う。
-        (ROLE_HARVESTER, std::cmp::max(2, t * 3 / 10)),
-        // 余剰労働力。内訳 (建設 / 修理 / アップグレード) はその時の仕事の
-        // 有無で自動的に決まるので、ここでは総量だけを決める。
-        (ROLE_WORKER, std::cmp::max(1, t * 4 / 10)),
-        // 鉱物系は Extractor があって初めて成立する。無い部屋で割り当てても
-        // 採取先が存在せず、その creep は待機し続けるだけになる。
-        (
-            ROLE_HARVESTER_MINERAL,
-            if has_extractor && t > 10 { 1 } else { 0 },
-        ),
+        // 防衛。攻撃能力を持つ敵がいるときだけ。何より優先する。
+        (ROLE_DEFENDER, if state.hostiles_present { 2 } else { 0 }),
+        // 静的採掘者。source に1体ずつ + 寿命が近い個体の後継。
+        // WORK 5個で source の再生速度と釣り合うので、1 source 1体で足りる。
+        (ROLE_MINER, state.total_sources + state.miners_expiring),
+        // 運搬。source からの搬出2系統 + 拠点内の補給に1〜2体。
+        (ROLE_HAULER, state.total_sources + 2),
+        // 余剰労働力 (建設・修理・アップグレード)。
+        (ROLE_WORKER, state.total_sources * 2 + 1),
+        // 鉱物系は Extractor (RCL6) があって初めて成立する。
+        // 注意: 旧世代の採取ステートマシン退役に伴い、鉱物の採取側は
+        // 未実装に戻っている。Extractor 解禁 (RCL6) までに mineral 専用の
+        // miner/hauler を実装すること。それまで目標は 0 のまま。
+        (ROLE_HARVESTER_MINERAL, 0),
         (
             ROLE_CARRIER_MINERAL,
-            if has_extractor && has_terminal && t > 10 { 1 } else { 0 },
+            if state.has_extractor && state.has_terminal { 1 } else { 0 },
         ),
     ]
 }
 
+/// 目標の合計 = 目指す人口。spawn はこれを上限として生産する。
+pub fn total_role_target(state: &ColonyState) -> i32 {
+    role_targets(state).iter().map(|(_, n)| n).sum()
+}
+
 /// 今いちばん不足しているロール。生産する body を決めるのに使う。
-///
-/// 旧実装は creep を作ってから creep_loop がロールを割り当てていたため、
-/// body は常に同じ汎用構成 (MOVE/MOVE/CARRY/WORK の繰り返し) だった。
-/// 静的採掘者は WORK 偏重、運搬者は CARRY 偏重が正解なので、
-/// 生産時点でロールを決めて body を合わせる。
 pub fn most_needed_role(state: &ColonyState) -> &'static str {
     let mut counts: HashMap<String, i32> = HashMap::new();
     for creep in game::creeps().values() {
@@ -200,328 +198,10 @@ pub fn most_needed_role(state: &ColonyState) -> &'static str {
     ROLE_WORKER
 }
 
-/// この creep がそのロールをこなせる body を持っているか。
-///
-/// 旧実装は body を一切見ずに列挙順の先頭3体を無条件で harvester_spawn にしていた。
-/// WORK 1個・ATTACK 10個の creep が採取係になり得る。
-fn can_fill_role(creep: &Creep, role: &str) -> bool {
-    let mut work = 0;
-    let mut carry = 0;
-    for part in creep.body().iter() {
-        if part.hits() == 0 {
-            continue;
-        }
-        match part.part() {
-            Part::Work => work += 1,
-            Part::Carry => carry += 1,
-            _ => {}
-        }
-    }
-
-    match role {
-        // 運搬だけなので CARRY があればよい。
-        ROLE_CARRIER_MINERAL | ROLE_HAULER => carry > 0,
-        // 静的採掘者は掘って隣の container に移すだけ。
-        ROLE_MINER => work > 0,
-        // 採取・建設・修理・アップグレードには WORK と CARRY の両方が要る。
-        _ => work > 0 && carry > 0,
-    }
-}
-
-/// 不足が最も大きく、かつこの creep がこなせるロールを選ぶ。
-fn pick_role(creep: &Creep, targets: &[(&'static str, i32)], counts: &HashMap<String, i32>) -> String {
-    let mut best: Option<(&'static str, i32)> = None;
-
-    for (role, target) in targets.iter() {
-        if !can_fill_role(creep, role) {
-            continue;
-        }
-        let current = counts.get(*role).copied().unwrap_or(0);
-        let deficit = target - current;
-        if deficit <= 0 {
-            continue;
-        }
-        // 同点なら targets の並び順 (優先度) が勝つ。
-        if best.map_or(true, |(_, b)| deficit > b) {
-            best = Some((role, deficit));
-        }
-    }
-
-    // どこも埋まっているなら採取に回す。
-    // 旧実装は catch-all が repairer で、緊急時に全員が repairer 化していた。
-    match best {
-        Some((role, _)) => role.to_string(),
-        None => {
-            if can_fill_role(creep, ROLE_HARVESTER) {
-                ROLE_HARVESTER.to_string()
-            } else {
-                ROLE_CARRIER_MINERAL.to_string()
-            }
-        }
-    }
-}
-
-/// ターゲットの有効期限を経路長から決める。
-///
-/// 旧実装は 5〜20 の固定値だった。カウントダウンは移動中に毎tick減るが、
-/// 基本 body は MOVE 比 1/2 なので平地1マスに2tick かかる。storage 用の初期値 10 だと
-/// 5マス進むごとにフル再探索を払う計算になり、部屋の対角 (最大約70マス) には
-/// いつまでも到達できなかった。
-/// 経路長 × 2 に余裕を足した値にする。
-fn path_ttl_from(path: &[Position]) -> i32 {
-    let steps = path.len() as i32;
-    (steps * 2 + 5).clamp(5, 200)
-}
-
-fn reset_source_target(
-    creep: &Creep,
-    is_harvester: bool,
-    harvest_kind: &ResourceKind,
-) -> (SearchResults, Position) {
-    debug!("harvesting : reset_source_target");
-
-    // 自分がすでに予約しているマスがあれば先に外す。
-    // 外さないと、自分の予約を避けて別のマスを選んでしまう。
-    if let Ok(Some(json)) = creep.memory().string("target_pos") {
-        if let Ok(prev) = serde_json::from_str::<Position>(&json) {
-            release_target(prev);
-        }
-    }
-
-    if is_harvester == true {
-        // active sourceをチェック.
-        let res = find_nearest_active_source(&creep, harvest_kind, false);
-        debug!(
-            "harvesting : find_nearest_active_source result:{:?}",
-            res.path()
-        );
-
-        let path = res.path();
-        if path.len() > 0 && res.incomplete() == false {
-            let last_pos = *(path.last().unwrap());
-            let json_str = serde_json::to_string(&last_pos).unwrap();
-            creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", path_ttl_from(&path));
-            claim_target(last_pos);
-            creep.memory().set("will_harvest_from_storage", false);
-            creep.memory().del("nothing_to_harvest");
-
-            debug!(
-                "harvesting : target_pos:{:?}",
-                creep.memory().string("target_pos")
-            );
-
-            return (res, last_pos);
-        }
-
-        // storageをチェック.
-        if *harvest_kind == ResourceKind::ENERGY {
-            let res = find_nearest_stored_source(&creep, harvest_kind, true);
-
-            let path = res.path();
-            if path.len() > 0 && res.incomplete() == false {
-                let last_pos = *(path.last().unwrap());
-                let json_str = serde_json::to_string(&last_pos).unwrap();
-                creep.memory().set("target_pos", json_str);
-                creep.memory().set("target_pos_count", path_ttl_from(&path));
-                claim_target(last_pos);
-                creep.memory().set("will_harvest_from_storage", true);
-                creep.memory().del("nothing_to_harvest");
-
-                debug!(
-                    "harvesting : target_pos:{:?}",
-                    creep.memory().string("target_pos")
-                );
-
-                return (res, last_pos);
-            }
-        }
-    } else {
-        // storageをチェック.
-        let res = find_nearest_stored_source(&creep, harvest_kind, false);
-
-        let path = res.path();
-        if path.len() > 0 && res.incomplete() == false {
-            let last_pos = *(path.last().unwrap());
-            let json_str = serde_json::to_string(&last_pos).unwrap();
-            creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", path_ttl_from(&path));
-            claim_target(last_pos);
-            creep.memory().set("will_harvest_from_storage", true);
-            creep.memory().del("nothing_to_harvest");
-
-            debug!(
-                "harvesting : target_pos:{:?}",
-                creep.memory().string("target_pos")
-            );
-
-            return (res, last_pos);
-        }
-
-        // active sourceをチェック.
-        let res = find_nearest_active_source(&creep, harvest_kind, true);
-        debug!(
-            "harvesting : find_nearest_active_source result:{:?}",
-            res.path()
-        );
-
-        let path = res.path();
-        if path.len() > 0 && res.incomplete() == false {
-            let last_pos = *(path.last().unwrap());
-            let json_str = serde_json::to_string(&last_pos).unwrap();
-            creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", path_ttl_from(&path));
-            claim_target(last_pos);
-            creep.memory().set("will_harvest_from_storage", false);
-            creep.memory().del("nothing_to_harvest");
-
-            debug!(
-                "harvesting : target_pos:{:?}",
-                creep.memory().string("target_pos")
-            );
-
-            return (res, last_pos);
-        }
-    }
-
-    //　やむなく枯渇sourceを選ぶ.
-    let res = find_nearest_exhausted_source(&creep, harvest_kind);
-
-    let path = res.path();
-    if path.len() > 0 {
-        let last_pos = *(path.last().unwrap());
-        let json_str = serde_json::to_string(&last_pos).unwrap();
-        creep.memory().set("target_pos", json_str);
-        creep.memory().set("target_pos_count", path_ttl_from(&path));
-        claim_target(last_pos);
-        creep.memory().set("will_harvest_from_storage", true);
-        creep.memory().del("nothing_to_harvest");
-
-        debug!(
-            "harvesting : target_pos:{:?}",
-            creep.memory().string("target_pos")
-        );
-
-        return (res, last_pos);
-    }
-
-    // 全部ダメならその場待機。
-    //
-    // 旧実装はここで「自分の現在地への経路探索」という無意味なコストを払い、
-    // 次tickも同じフル再探索 (全室スキャン6回 + 経路探索3回) を無限に繰り返して
-    // いた。採取先が無い状況は数tickで変わらないので、しばらく探索を止める。
-    creep.memory().set("nothing_to_harvest", true);
-    creep.memory().set(
-        "harvest_retry_at",
-        (game::time() + HARVEST_RETRY_BACKOFF) as i32,
-    );
-    return (empty_search_for(&creep), creep.pos());
-}
-
-/// 攻撃パーツを持つ creep の戦闘処理。
-///
-/// 戻り値は「この tick の移動を消費したか」。Screeps は 1 tick に attack と transfer と
-/// move を同時に発行できるので、攻撃しただけなら経済の仕事も続けてよい。
-///
-/// 旧実装は攻撃が成功した時点で true を返し、呼び出し側が `continue` で creep の仕事を
-/// 丸ごと飛ばしていた。spawn は creep 総数の 1/3 に攻撃パーツを配るので、偵察目的の敵が
-/// 1体入ってくるだけで艦隊の大半が採取も建設も止めていた。
-/// さらに採取ステートマシンが使う `target_pos` に敵座標を、`harvesting` に true を
-/// 書き込んで状態を壊していたため、敵が消えた次の tick に「敵がいた座標を採取ターゲット
-/// として扱う」無駄な往復が起きていた。攻撃用のキーは分離する。
-fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
-    debug!("check enemies {}", creep.name());
-    let room = creep.room().expect("room is not visible to you");
-    let enemies = room_hostiles(&room);
-
-    if enemies.is_empty() {
-        creep.memory().del("attack_target_pos");
-        return false;
-    }
-
-    // 射程内の敵がいれば撃つ。移動は消費しない。
-    let mut attacked = false;
-    for enemy in enemies.iter() {
-        let r = match kind {
-            AttackerKind::SHORT => creep.attack(enemy).is_ok(),
-            AttackerKind::RANGED => creep.ranged_attack(enemy).is_ok(),
-            AttackerKind::NONE => false,
-        };
-
-        if r {
-            info!("attack to enemy!!");
-            attacked = true;
-            break;
-        }
-    }
-
-    if attacked {
-        // 撃てたなら近づく必要はない。移動は経済側に譲る。
-        return false;
-    }
-
-    // 射程外なので接近する。ここで初めて移動を消費する。
-    // RANGED の射程は 3。旧実装は 2 を指定しており、わざわざ近接圏まで
-    // 踏み込みに行っていた。
-    let range: u32 = match kind {
-        AttackerKind::SHORT => 1,
-        AttackerKind::RANGED => 3,
-        AttackerKind::NONE => 1,
-    };
-
-    let res = find_nearest_enemy(&creep, range);
-    let path = res.path();
-
-    if path.len() > 0 {
-        let last_pos = *(path.last().unwrap());
-        let json_str = serde_json::to_string(&last_pos).unwrap();
-        // 採取用の target_pos とは別のキーに書く。
-        creep.memory().set("attack_target_pos", json_str);
-
-        let move_result = move_by_search_result(&creep, &res);
-        if move_result.is_ok() {
-            info!("move to enemy: {:?}", move_result);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-fn get_role_and_attacker_kind(creep: &Creep) -> (String, AttackerKind) {
-    let mut attacker_kind: AttackerKind = AttackerKind::NONE;
-    let role = creep.memory().string("role");
-    let mut role_string = String::from("none");
-
-    // attacker kind check.
-    let body_list = creep.body();
-    for body_part in body_list {
-        if body_part.part() == Part::Attack {
-            attacker_kind = AttackerKind::SHORT;
-            break;
-        } else if body_part.part() == Part::RangedAttack {
-            attacker_kind = AttackerKind::RANGED;
-            break;
-        }
-    }
-
-    if let Ok(object) = role {
-        if let Some(object) = object {
-            role_string = object;
-        } else {
-            role_string = String::from("none");
-        }
-    }
-
-    return (role_string, attacker_kind);
-}
-
 /// 1 tick 分の creep の情報。
 ///
 /// body も Memory も JS 越しの取得なので、tick 内で何度も読み直すと高くつく。
-/// 旧実装は集計ループと実処理ループでそれぞれ body を読み、さらに再配分が
-/// 目標ロールの数だけ全 creep を舐め直していたため、1体の body を 1 tick に
-/// 10 回近く読むことがあった。最初に1回だけ読んで使い回す。
+/// 最初に1回だけ読んで使い回す。
 struct CreepInfo {
     creep: Creep,
     name: String,
@@ -529,8 +209,7 @@ struct CreepInfo {
     attacker_kind: AttackerKind,
     work: u32,
     carry: u32,
-    /// 連続で同じマスに留まっている tick 数。
-    stuck_ticks: i32,
+    attack: u32,
 }
 
 impl CreepInfo {
@@ -539,41 +218,120 @@ impl CreepInfo {
         match role {
             ROLE_CARRIER_MINERAL | ROLE_HAULER => self.carry > 0,
             ROLE_MINER => self.work > 0,
+            ROLE_DEFENDER => self.attack > 0,
             _ => self.work > 0 && self.carry > 0,
         }
     }
 }
 
+/// 不足が最も大きく、かつこの creep がこなせるロールを選ぶ。
+fn pick_role(
+    info: &CreepInfo,
+    targets: &[(&'static str, i32)],
+    counts: &HashMap<String, i32>,
+) -> String {
+    let mut best: Option<(&'static str, i32)> = None;
+
+    for (role, target) in targets.iter() {
+        if !info.can_fill(role) {
+            continue;
+        }
+        let current = counts.get(*role).copied().unwrap_or(0);
+        let deficit = target - current;
+        if deficit <= 0 {
+            continue;
+        }
+        if best.is_none_or(|(_, b)| deficit > b) {
+            best = Some((role, deficit));
+        }
+    }
+
+    // どこも埋まっていなければ余剰労働力として働く。
+    match best {
+        Some((role, _)) => role.to_string(),
+        None => {
+            if info.can_fill(ROLE_WORKER) {
+                ROLE_WORKER.to_string()
+            } else if info.can_fill(ROLE_HAULER) {
+                ROLE_HAULER.to_string()
+            } else {
+                ROLE_DEFENDER.to_string()
+            }
+        }
+    }
+}
+
+/// 敵がいれば撃つ。戻り値は「この tick の移動を消費したか」。
+///
+/// Screeps は 1 tick に attack と transfer と move を同時に発行できるので、
+/// 撃っただけなら経済の仕事も続けてよい。攻撃用の Memory キーは採取系とは
+/// 分離してある (過去に target_pos を共有して採取状態を壊していた)。
+fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
+    let Some(room) = creep.room() else {
+        return false;
+    };
+    let enemies = room_hostiles(&room);
+
+    if enemies.is_empty() {
+        creep.memory().del("attack_target_pos");
+        return false;
+    }
+
+    for enemy in enemies.iter() {
+        let hit = match kind {
+            AttackerKind::SHORT => creep.attack(enemy).is_ok(),
+            AttackerKind::RANGED => creep.ranged_attack(enemy).is_ok(),
+            AttackerKind::NONE => false,
+        };
+        if hit {
+            info!("attack to enemy!!");
+            // 撃てたなら近づく必要はない。移動は経済側に譲る。
+            return false;
+        }
+    }
+
+    false
+}
+
 pub fn creep_loop() {
-    // ロール別の実数。旧実装は7個の個別変数だったが、目標との差分で配分するには
-    // 名前で引ける形の方が扱いやすい。
-    let mut role_counts: HashMap<String, i32> = HashMap::new();
-
-    let mut opt_num_attackable_short: i32 = 0;
-    let mut opt_num_attackable_long: i32 = 0;
-
-    let mut cap_worker_carry: u128 = 0;
-
-    // ロール構成の判断材料は tick 内で不変なので 1 回だけ観測する。
     let colony = ColonyState::observe();
     let total_creeps = colony.total_creeps as usize;
 
-    // creep ごとの情報を1回だけ集める。
+    // creep ごとの情報とロール別実数を1回だけ集める。
+    let mut role_counts: HashMap<String, i32> = HashMap::new();
     let mut roster: Vec<CreepInfo> = Vec::with_capacity(total_creeps);
 
     for creep in game::creeps().values() {
         let name = creep.name();
         let cmem = creep.memory();
 
-        let role = cmem
+        let mut role = cmem
             .string("role")
             .ok()
             .flatten()
             .unwrap_or_else(|| String::from("none"));
 
-        // body の走査はここ1回だけ。攻撃能力とパーツ数を同時に数える。
+        // 退役したロール名を持つ creep は未割り当てとして扱い、即座に
+        // 新体制のロールへ振り直す。
+        if matches!(
+            role.as_str(),
+            "harvester" | "harvester_spawn" | "builder" | "upgrader" | "repairer"
+        ) {
+            cmem.del("role");
+            // 旧ステートマシンの残骸も掃除しておく。
+            cmem.del("harvesting");
+            cmem.del("target_pos");
+            cmem.del("target_pos_count");
+            cmem.del("will_harvest_from_storage");
+            cmem.del("nothing_to_harvest");
+            cmem.del("harvest_retry_at");
+            role = String::from("none");
+        }
+
+        // body の走査はここ1回だけ。
         let mut work = 0;
         let mut carry = 0;
+        let mut attack = 0;
         let mut attacker_kind = AttackerKind::NONE;
         for part in creep.body().iter() {
             if part.hits() == 0 {
@@ -583,50 +341,22 @@ pub fn creep_loop() {
                 Part::Work => work += 1,
                 Part::Carry => carry += 1,
                 Part::Attack => {
+                    attack += 1;
                     if attacker_kind == AttackerKind::NONE {
                         attacker_kind = AttackerKind::SHORT;
                     }
                 }
-                Part::RangedAttack => attacker_kind = AttackerKind::RANGED,
+                Part::RangedAttack => {
+                    attack += 1;
+                    attacker_kind = AttackerKind::RANGED;
+                }
                 _ => {}
             }
         }
 
-        match attacker_kind {
-            AttackerKind::SHORT => opt_num_attackable_short += 1,
-            AttackerKind::RANGED => opt_num_attackable_long += 1,
-            AttackerKind::NONE => {}
-        }
-
         if role != "none" {
             *role_counts.entry(role.clone()).or_insert(0) += 1;
-            if role == ROLE_HARVESTER || role == ROLE_HARVESTER_SPAWN {
-                cap_worker_carry += creep.store().get_capacity(None) as u128;
-            }
         }
-
-        // すでに目指している立ち位置を予約として登録する。
-        // 他の creep が同じマスを選ばないようにするため。
-        if let Ok(Some(json)) = cmem.string("target_pos") {
-            if let Ok(pos) = serde_json::from_str::<Position>(&json) {
-                claim_target(pos);
-            }
-        }
-
-        // スタック検知。前 tick と同じマスに居続けたらカウントを増やす。
-        // 意図して動かない creep (miner の定位置、upgrader の作業中など) も
-        // カウントは増えるが、使う側で「移動しようとしている creep」に限る。
-        let pos = creep.pos();
-        let packed = pos.packed_repr() as i32;
-        let prev_packed = cmem.i32("last_pos").unwrap_or(None).unwrap_or(-1);
-        let stuck_ticks = if prev_packed == packed {
-            let n = cmem.i32("stuck_ticks").unwrap_or(None).unwrap_or(0) + 1;
-            n
-        } else {
-            0
-        };
-        cmem.set("last_pos", packed);
-        cmem.set("stuck_ticks", stuck_ticks);
 
         roster.push(CreepInfo {
             creep,
@@ -635,40 +365,14 @@ pub fn creep_loop() {
             attacker_kind,
             work,
             carry,
-            stuck_ticks,
+            attack,
         });
     }
 
-    // 採取係が枯渇したら全ロールを白紙に戻して再編成する。
-    //
-    // 旧実装はロールを消すだけでカウンタを据え置いていたため、直後の再割り当てが
-    // 「creepのロールはゼロなのにカウンタは満室」という状態で走り、upgrader も
-    // builder も repairer も充足済みと誤判定してスキップ、cap_worker_carry も
-    // 古い大きな値のままで harvester が1体も作られず、残り全員が catch-all の
-    // repairer に落ちていた。採取係が枯渇した瞬間に全creepが最も重い委譲チェーンを
-    // 走るという、最悪のタイミングで最悪の挙動になっていた。
-    // ロールを消すならカウンタも同じ地点まで巻き戻す。
-    let harvester_total = role_counts.get(ROLE_HARVESTER).copied().unwrap_or(0)
-        + role_counts.get(ROLE_HARVESTER_SPAWN).copied().unwrap_or(0);
-    if (harvester_total <= 2) && (total_creeps > harvester_total as usize) {
-        warn!("harvesters depleted; resetting all roles");
-        for info in roster.iter_mut() {
-            info.creep.memory().del("role");
-            info.role = String::from("none");
-        }
-
-        role_counts.clear();
-        cap_worker_carry = 0;
-    }
-
-    // 目標に寄せる再配分。
-    //
-    // 新規 creep への割り当てだけでは、いったんできた偏りが直らない。総数が減っても
-    // 過剰なロールはそのまま残るので、余っているロールから足りないロールへ
-    // 少しずつ移す。1 tick に動かすのは1体だけにしてハンチングを避ける。
+    // 目標に寄せる再配分。余っているロールから足りないロールへ、1 tick に
+    // 1体だけ移す (まとめて動かすとハンチングする)。
+    let targets = role_targets(&colony);
     {
-        let targets = role_targets(&colony);
-
         let mut moved = 0;
         for (role, target) in targets.iter() {
             if moved >= ROLE_REBALANCE_PER_TICK {
@@ -679,7 +383,6 @@ pub fn creep_loop() {
                 continue;
             }
 
-            // 最も余っているロールを探す。
             let surplus_role = targets
                 .iter()
                 .filter(|(r, t)| role_counts.get(*r).copied().unwrap_or(0) > *t)
@@ -690,8 +393,6 @@ pub fn creep_loop() {
                 break;
             };
 
-            // 余っているロールの creep を1体、こなせるなら移す。
-            // 集めておいたロスターから選ぶので、ここで body も Memory も読み直さない。
             let victim = roster
                 .iter_mut()
                 .find(|i| i.role == surplus_role && i.can_fill(role));
@@ -699,10 +400,8 @@ pub fn creep_loop() {
             if let Some(victim) = victim {
                 info!("rebalance {}: {} -> {}", victim.name, surplus_role, role);
                 victim.creep.memory().set("role", *role);
-                // 配達途中の状態を持ち越さない。
-                victim.creep.memory().del("target_pos");
-                victim.creep.memory().del("target_pos_count");
                 victim.creep.memory().del("upgrade_duty");
+                victim.creep.memory().del("mine_at");
                 victim.role = role.to_string();
 
                 *role_counts.entry(surplus_role.to_string()).or_insert(0) -= 1;
@@ -712,642 +411,71 @@ pub fn creep_loop() {
         }
     }
 
-    // 固定アップグレード係を1体維持する。
-    //
-    // 当初は「各tickの最初の worker」を充てていたが、この指名は tick ごとに
-    // 別の creep に移り得る。controller まで20マス歩く道中で指名が外れると
-    // 建設に戻ってしまい、結局誰も到着しない (実測: タイマー毎tick減少、
-    // controller 付近の upgrader ゼロ)。Memory の upgrade_duty フラグで
-    // 1体に固定し、その creep が死んだら次の worker を指名する。
-    let worker_family = |r: &str| matches!(r, "worker" | "builder" | "upgrader" | "repairer");
-    let duty_alive = roster.iter().any(|i| {
-        worker_family(&i.role) && i.creep.memory().bool("upgrade_duty")
-    });
+    // 固定アップグレード係を1体維持する。建設が続いても controller の進捗が
+    // 完全には止まらないようにする。Memory フラグで粘着させる (tick ごとに
+    // 指名が移ると、controller までの道中で指名が外れて誰も到着しない)。
+    let duty_alive = roster
+        .iter()
+        .any(|i| i.role == ROLE_WORKER && i.creep.memory().bool("upgrade_duty"));
     if !duty_alive {
-        if let Some(candidate) = roster.iter().find(|i| worker_family(&i.role)) {
+        if let Some(candidate) = roster.iter().find(|i| i.role == ROLE_WORKER) {
             info!("{} takes upgrade duty", candidate.name);
             candidate.creep.memory().set("upgrade_duty", true);
         }
     }
 
-    for info in roster.iter() {
-        let creep = &info.creep;
-        let name = info.name.clone();
-        debug!("running creep {}, cpu:{}", name, game::cpu::get_used());
+    // 実処理。
+    for info in roster.iter_mut() {
+        debug!("running creep {}, cpu:{}", info.name, game::cpu::get_used());
 
-        // スタック用の探索モードは creep ごとに決める。前の creep の状態を
-        // 引き継がないよう、冒頭で必ず解除する (途中の continue で末尾の解除が
-        // 飛ばされてもリークしない)。
-        set_hard_block_my_creeps(false);
-
-        // memory は JS の getter なので 1 回だけ取って使い回す。
-        let cmem = creep.memory();
-
-        let mut harvest_kind: ResourceKind = ResourceKind::ENERGY;
-        let mut is_harvester = false;
-
-        let mut role_string = info.role.clone();
-        let attacker_kind = &info.attacker_kind;
-
-        if role_string == "none" {
-            let targets = role_targets(&colony);
-            role_string = pick_role(&creep, &targets, &role_counts);
-
-            cmem.set("role", role_string.as_str());
-            *role_counts.entry(role_string.clone()).or_insert(0) += 1;
-
-            if role_string == ROLE_HARVESTER || role_string == ROLE_HARVESTER_SPAWN {
-                cap_worker_carry += creep.store().get_capacity(None) as u128;
-            }
-        }
-
-        // 採取ロールかどうか。
-        // BUG-5: 旧実装は harvester_spawn がこの match から漏れており、
-        // is_harvester == false のまま「storage優先 → active source 後回し」という
-        // harvester とは逆の探索順で動いていた。storage も container も無い
-        // RCL1〜2 では、最初の3体が全員この経路で空スキャンを毎回払っていた。
-        is_harvester = matches!(
-            role_string.as_str(),
-            ROLE_HARVESTER | ROLE_HARVESTER_SPAWN | ROLE_HARVESTER_MINERAL
-        );
-
-        if role_string == ROLE_HARVESTER_MINERAL {
-            harvest_kind = ResourceKind::MINELALS;
-        }
-
-        info!("role:{:?}:atk:{:?}", role_string, attacker_kind);
-
-        if creep.spawning() {
+        if info.creep.spawning() {
             continue;
         }
 
-        //// atacker check.
-        // 戻り値は「移動を消費したか」。攻撃しただけなら経済の仕事も続ける。
-        if *attacker_kind != AttackerKind::NONE {
-            let moved_to_enemy = attacker_routine(creep, attacker_kind);
-
-            if moved_to_enemy {
-                continue;
-            }
+        // ロールが未割り当てなら今決める。
+        if info.role == "none" {
+            let role = pick_role(info, &targets, &role_counts);
+            info.creep.memory().set("role", role.as_str());
+            *role_counts.entry(role.clone()).or_insert(0) += 1;
+            info.role = role;
         }
 
-        //// harvest resrouce kind.
-        if role_string == String::from("harvester_mineral")
-            || role_string == String::from("carrier_mineral")
-        {
-            harvest_kind = ResourceKind::MINELALS;
+        let creep = &info.creep;
+
+        // 攻撃パーツ持ちは、敵がいれば手番のついでに撃つ (defender 以外)。
+        // defender は自前で追撃まで行うので二重に撃たない。
+        if info.attacker_kind != AttackerKind::NONE && info.role != ROLE_DEFENDER {
+            attacker_routine(creep, &info.attacker_kind);
         }
 
-        // 配達できる荷 (今のロールが扱う資源) の量。
-        //
-        // 旧実装は採取フェーズへの復帰条件に get_used_capacity(None)、つまり
-        // 「全資源が空か」を使っていた。ロール変更でミネラルを抱えたままエネルギー系の
-        // ロールになったcreepは、配達先をエネルギーでしか探さないので必ず失敗し、
-        // かつ荷が残っているので採取フェーズにも戻れず、寿命が尽きるまで毎tick
-        // 全室スキャンを回し続けるデッドロックに陥っていた。
-        // 判定を「今のロールで配達できる荷があるか」に変える。
-        let store = creep.store();
-        let deliverable: u32 = make_resoucetype_list(&harvest_kind)
-            .iter()
-            .map(|rt| store.get_used_capacity(Some(*rt)))
-            .sum();
-        let total_used = store.get_used_capacity(None);
-        let free_capacity = store.get_free_capacity(None);
-
-        if cmem.bool("harvesting") {
-            if (free_capacity == 0)
-                || ((cmem.bool("nothing_to_harvest")) && (deliverable > 0))
-            {
-                cmem.set("harvesting", false);
-                cmem.del("target_pos");
-                cmem.del("will_harvest_from_storage");
-                cmem.del("nothing_to_harvest");
+        match info.role.as_str() {
+            "miner" => miner::run_miner(creep),
+            "hauler" => hauler::run_hauler(creep),
+            "defender" => defender::run_defender(creep),
+            "worker" => {
+                worker::run_worker(creep, creep.memory().bool("upgrade_duty"));
             }
-        } else {
-            if deliverable == 0 {
-                // 配達できる荷が無いなら採取に戻る。ただし配達できない荷で満杯だと
-                // 採取もできないので、その場合だけ捨てて詰まりを解消する。
-                if total_used > 0 && free_capacity == 0 {
-                    for resource in store.store_types() {
-                        if !check_resouce_type_kind_matching(&resource, &harvest_kind) {
-                            warn!(
-                                "{} is stuck with undeliverable {:?}; dropping",
-                                name, resource
-                            );
-                            let _ = creep.drop(resource, None);
-                            break;
-                        }
-                    }
-                }
 
-                cmem.set("harvesting", true);
-                cmem.del("target_pos");
-                cmem.del("harvested_from_storage");
-                cmem.del("harvested_from_terminal");
-                cmem.del("harvested_from_link");
-                cmem.del("nothing_to_harvest");
+            // 鉱物系: 旧採取ステートマシンの退役により採取側が未実装。
+            // Extractor 解禁 (RCL6) までに専用実装を入れる。それまでは
+            // 目標 0 なので通常ここには来ないが、来ても遊ばせない。
+            "harvester_mineral" | "carrier_mineral" => {
+                worker::run_worker(creep, false);
+            }
+
+            other => {
+                warn!("{} has unknown role {:?}; treating as worker", info.name, other);
+                worker::run_worker(creep, false);
             }
         }
-
-        // スタック処理。採取のため移動中 (harvesting でターゲット持ち) に
-        // 数tick動けていないなら、味方を壁扱いする探索に切り替えた上で
-        // ターゲットを選び直す。押し合いの千日手をここで断ち切る。
-        // miner は定位置で意図的に動かないので対象外。
-        let is_stuck = info.stuck_ticks >= STUCK_THRESHOLD
-            && role_string != ROLE_MINER
-            && cmem.bool("harvesting")
-            && cmem.string("target_pos").ok().flatten().is_some();
-
-        if is_stuck {
-            debug!("{} is stuck for {} ticks; re-targeting", name, info.stuck_ticks);
-            if let Ok(Some(json)) = cmem.string("target_pos") {
-                if let Ok(prev) = serde_json::from_str::<Position>(&json) {
-                    release_target(prev);
-                }
-            }
-            cmem.del("target_pos");
-            cmem.del("target_pos_count");
-            // カウンタを戻す。戻さないと、依然動けない間このフル再探索が
-            // 毎tick繰り返されて CPU を溶かす。次の発火は THRESHOLD tick 後。
-            cmem.set("stuck_ticks", 0);
-            set_hard_block_my_creeps(true);
-        }
-
-        // 採取先が無いと分かった直後は、再探索を数tick止める。
-        // 探索はフルで走ると全室スキャン6回 + 経路探索3回に達するため、
-        // 状況が変わらないうちに毎tick繰り返すのは純粋な浪費になる。
-        if cmem.bool("harvesting") && cmem.bool("nothing_to_harvest") {
-            let retry_at = creep
-                .memory()
-                .i32("harvest_retry_at")
-                .unwrap_or(Some(0))
-                .unwrap_or(0);
-            if (game::time() as i32) < retry_at {
-                debug!("{} waiting for harvest retry at {}", name, retry_at);
-                continue;
-            }
-            cmem.del("harvest_retry_at");
-        }
-
-        if cmem.bool("harvesting") {
-            debug!("harvesting {}", name);
-
-            let check_string = cmem.string("target_pos");
-            debug!("harvesting string{:?}", check_string);
-
-            let mut defined_target_pos = creep.pos();
-            let mut path_search_result;
-
-            match check_string {
-                Ok(v) => {
-                    match v {
-                        Some(v) => {
-                            let defined_target_obj: Result<Position, serde_json::Error> =
-                                serde_json::from_str(v.as_str());
-
-                            match defined_target_obj {
-                                Ok(object) => {
-                                    defined_target_pos = object;
-                                    debug!("harvesting decided:{}", defined_target_pos);
-                                    path_search_result = find_path(&creep, &defined_target_pos, 0);
-                                    debug!(
-                                        "harvesting decided path:{:?}",
-                                        path_search_result.path()
-                                    );
-
-                                    // ターゲット座標のある部屋を見る。旧実装は creep が
-                                    // 今いる部屋を見ていたため、他室のターゲットに対して
-                                    // 自室の同じ座標を調べてしまい、誤検知 (自室にたまたま
-                                    // creep がいると「取られた」と誤判定) と検知漏れ
-                                    // (他室の本当のターゲット上の creep を見逃す) の
-                                    // 両方が起きていた。
-                                    let look_result = game::rooms()
-                                        .get(defined_target_pos.room_name())
-                                        .map(|target_room| {
-                                            target_room.look_for_at_xy(
-                                                look::CREEPS,
-                                                defined_target_pos.x().u8(),
-                                                defined_target_pos.y().u8(),
-                                            )
-                                        })
-                                        .unwrap_or_default();
-
-                                    for one_result in look_result {
-                                        if one_result.name() != creep.name() {
-                                            debug!("re-check source :{}", defined_target_pos);
-                                            cmem.del("target_pos");
-
-                                            let reset_result = reset_source_target(
-                                                &creep,
-                                                is_harvester,
-                                                &harvest_kind,
-                                            );
-                                            path_search_result = reset_result.0;
-                                            defined_target_pos = reset_result.1;
-
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                Err(_err) => {
-                                    //ロードに成功して値もあったけどDeSerializeできなかった.
-                                    let reset_result =
-                                        reset_source_target(&creep, is_harvester, &harvest_kind);
-                                    path_search_result = reset_result.0;
-                                    defined_target_pos = reset_result.1;
-                                }
-                            }
-                        }
-
-                        None => {
-                            //ロードに成功したけど値がない.
-                            let reset_result =
-                                reset_source_target(&creep, is_harvester, &harvest_kind);
-                            path_search_result = reset_result.0;
-                            defined_target_pos = reset_result.1;
-                        }
-                    }
-                }
-
-                //ロードに失敗(key自体がない).
-                Err(_err) => {
-                    let reset_result = reset_source_target(&creep, is_harvester, &harvest_kind);
-                    path_search_result = reset_result.0;
-                    defined_target_pos = reset_result.1;
-                }
-            }
-
-            let mut is_harvested = false;
-            let resource_type_list = make_resoucetype_list(&harvest_kind);
-
-            // check dropped source.
-            let resources = &creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::DROPPED_RESOURCES, None);
-
-            for resource in resources.iter() {
-                if creep.pos().is_near_to(resource.pos())
-                    && check_resouce_type_kind_matching(&resource.resource_type(), &harvest_kind)
-                {
-                    if let Err(r) = creep.pickup(resource) {
-                        warn!("couldn't pick-up dropped resrouces: {:?}", r);
-                        continue;
-                    }
-                    is_harvested = true;
-                    break;
-                }
-            }
-
-            // check ruins.
-            if is_harvested == false {
-                let ruins = &creep
-                    .room()
-                    .expect("room is not visible to you")
-                    .find(find::RUINS, None);
-
-                for ruin in ruins.iter() {
-                    if creep.pos().is_near_to(ruin.pos()) {
-                        for resource_type in resource_type_list.iter() {
-                            if ruin.store().get_used_capacity(Some(*resource_type)) > 0 {
-                                if let Err(r) = creep.withdraw(ruin, *resource_type, None) {
-                                    warn!("couldn't withdraw from RUINs: {:?}", r);
-                                    break;
-                                }
-                                is_harvested = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if is_harvested == true {
-                        break;
-                    }
-                }
-            }
-
-            // check tombstones.
-            if is_harvested == false {
-                let tombstones = &creep
-                    .room()
-                    .expect("room is not visible to you")
-                    .find(find::TOMBSTONES, None);
-
-                for tombstone in tombstones.iter() {
-                    if creep.pos().is_near_to(tombstone.pos()) {
-                        for resource_type in resource_type_list.iter() {
-                            if tombstone.store().get_used_capacity(Some(*resource_type)) > 0 {
-                                if let Err(r) = creep.withdraw(tombstone, *resource_type, None) {
-                                    warn!("couldn't withdraw from TOMBSTONES: {:?}", r);
-                                    break;
-                                }
-                                is_harvested = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if is_harvested == true {
-                        break;
-                    }
-                }
-            }
-
-            //  check sources active.
-            if is_harvested == false && harvest_kind == ResourceKind::ENERGY {
-                let sources = &creep
-                    .room()
-                    .expect("room is not visible to you")
-                    .find(find::SOURCES_ACTIVE, None);
-
-                for source in sources.iter() {
-                    if creep.pos().is_near_to(source.pos()) {
-                        if let Err(r) = creep.harvest(source) {
-                            warn!("couldn't harvest from ActiveSource: {:?}", r);
-                            continue;
-                        }
-                        is_harvested = true;
-                        break;
-                    }
-                }
-            }
-
-            if is_harvested == false && harvest_kind == ResourceKind::MINELALS {
-                let sources = &creep
-                    .room()
-                    .expect("room is not visible to you")
-                    .find(find::MINERALS, None);
-
-                for source in sources.iter() {
-                    if creep.pos().is_near_to(source.pos()) {
-                        match creep.harvest(source) {
-                            Ok(()) | Err(HarvestErrorCode::Tired) => {
-                                // Tired は採掘クールダウン中なのでその場維持 (旧実装と同じ扱い).
-                            }
-                            Err(r) => {
-                                info!("couldn't harvest from Minerals: {:?}", r);
-                                continue;
-                            }
-                        }
-                        is_harvested = true;
-                        break;
-                    }
-                }
-            }
-
-            //  storage.
-            if is_harvested == false && cmem.bool("will_harvest_from_storage") == true {
-                let structures = &creep
-                    .room()
-                    .expect("room is not visible to you")
-                    .find(find::STRUCTURES, None);
-
-                for structure in structures.iter() {
-                    if creep.pos().is_near_to(structure.pos()) {
-                        for resource_type in resource_type_list.iter() {
-                            if check_stored(structure, &resource_type, 0) {
-                                match structure {
-                                    StructureObject::StructureContainer(container) => {
-                                        if let Err(r) =
-                                            creep.withdraw(container, *resource_type, None)
-                                        {
-                                            warn!("couldn't withdraw from container: {:?}", r);
-                                            break;
-                                        }
-                                        cmem.set("harvested_from_storage", true);
-                                        is_harvested = true;
-                                        break;
-                                    }
-
-                                    StructureObject::StructureStorage(storage) => {
-                                        if let Err(r) =
-                                            creep.withdraw(storage, *resource_type, None)
-                                        {
-                                            warn!("couldn't withdraw from storage: {:?}", r);
-                                            break;
-                                        }
-                                        cmem.set("harvested_from_storage", true);
-                                        is_harvested = true;
-                                        break;
-                                    }
-
-                                    StructureObject::StructureTerminal(terminal) => {
-                                        if harvest_kind == ResourceKind::ENERGY {
-                                            if terminal
-                                                .store()
-                                                .get_used_capacity(Some(*resource_type))
-                                                > TERMINAL_KEEP_ENERGY
-                                            {
-                                                if let Err(r) = creep.withdraw(
-                                                    terminal,
-                                                    *resource_type,
-                                                    Some(std::cmp::min(
-                                                        terminal
-                                                            .store()
-                                                            .get_used_capacity(Some(
-                                                                *resource_type,
-                                                            ))
-                                                            - TERMINAL_KEEP_ENERGY,
-                                                        creep.store().get_free_capacity(None)
-                                                            as u32,
-                                                    )),
-                                                ) {
-                                                    warn!(
-                                                        "couldn't withdraw from terminal: {:?}",
-                                                        r
-                                                    );
-                                                    break;
-                                                }
-                                                cmem.set("harvested_from_terminal", true);
-                                                is_harvested = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    StructureObject::StructureLink(link) => {
-                                        if let Err(r) = creep.withdraw(link, *resource_type, None) {
-                                            warn!("couldn't withdraw from link: {:?}", r);
-                                            break;
-                                        }
-                                        cmem.set("harvested_from_link", true);
-                                        is_harvested = true;
-                                        break;
-                                    }
-
-                                    StructureObject::StructureLab(lab) => {
-                                        if harvest_kind == ResourceKind::MINELALS {
-                                            if let Err(r) =
-                                                creep.withdraw(lab, *resource_type, None)
-                                            {
-                                                warn!("couldn't withdraw from lab: {:?}", r);
-                                                break;
-                                            }
-                                            cmem.set("harvested_from_storage", true);
-                                            is_harvested = true;
-                                            break;
-                                        }
-                                    }
-
-                                    _ => {
-                                        //do nothing
-                                    }
-                                }
-                            }
-                        }
-
-                        if is_harvested == true {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if is_harvested == false {
-                if creep.pos() == defined_target_pos {
-                    debug!("already arrived, but can't harvest!!!");
-                    release_target(defined_target_pos);
-                    cmem.del("target_pos");
-                } else {
-                    let res = move_by_search_result(&creep, &path_search_result);
-
-                    if let Err(e) = res {
-                        info!("couldn't move to source: {:?}", e);
-                        // move_by_path は経路が使えない (creep が経路上にいない等) とき
-                        // NotFound を返す。旧 move_to の NoPath に相当するので、
-                        // 同じくターゲットを捨てて次tickに選び直す。
-                        if e == CreepMoveByPathErrorCode::NotFound {
-                            cmem.del("target_pos");
-                        }
-                    }
-                }
-
-                let mut target_pos_count = creep
-                    .memory()
-                    .i32("target_pos_count")
-                    .unwrap_or(Some(10))
-                    .unwrap_or(10);
-                target_pos_count -= 1;
-                if target_pos_count <= 0 {
-                    cmem.del("target_pos");
-                    cmem.del("target_pos_count");
-                } else {
-                    cmem.set("target_pos_count", target_pos_count);
-                }
-            }
-        } else {
-            debug!("TASK role:{:?}", role_string);
-
-            let sources = &creep
-                .room()
-                .expect("room is not visible to you")
-                .find(find::SOURCES_ACTIVE, None);
-
-            let mut is_finished = false;
-
-            let flee_count = creep
-                .memory()
-                .i32("fleeing_count")
-                .unwrap_or(Some(0))
-                .unwrap_or(0);
-
-            if flee_count <= 0 {
-                for source in sources.iter() {
-                    if creep.pos().is_near_to(source.pos()) {
-                        info!("fleeing from source!!");
-
-                        let result = find_flee_path_from_active_source(&creep);
-                        debug!(
-                            "fleeing from source!!:{},{},{:?}",
-                            result.ops(),
-                            result.cost(),
-                            result.path()
-                        );
-
-                        let res = move_by_search_result(&creep, &result);
-                        debug!("fleeing from source!!:{:?}", res);
-
-                        if res.is_ok() {
-                            cmem.set("fleeing_count", 5);
-                            is_finished = true;
-                        }
-
-                        break;
-                    }
-                }
-            } else {
-                cmem.set("fleeing_count", flee_count - 1);
-            }
-
-            if is_finished {
-                continue;
-            }
-
-            match role_string.as_str() {
-                "miner" => {
-                    miner::run_miner(&creep);
-                }
-
-                "hauler" => {
-                    hauler::run_hauler(&creep);
-                }
-
-                "harvester" => {
-                    harvester::run_harvester(&creep);
-                }
-
-                "harvester_spawn" => {
-                    harvester::run_harvester_spawn(&creep);
-                }
-
-                "harvester_mineral" => {
-                    harvester::run_harvester_mineral(&creep);
-                }
-
-                "carrier_mineral" => {
-                    harvester::run_carrier_mineral(&creep);
-                }
-
-                "worker" => {
-                    worker::run_worker(creep, cmem.bool("upgrade_duty"));
-                }
-
-                // 旧ロール名。生きている creep が持っている間は worker として扱う。
-                "builder" | "upgrader" | "repairer" => {
-                    worker::run_worker(creep, cmem.bool("upgrade_duty"));
-                }
-
-                "attacker" => {}
-
-                "none" => {
-                    error!("no role info");
-                }
-
-                &_ => {
-                    error!("no role info");
-                }
-            }
-        }
-
     }
 
-    // ループを抜けた後にフラグが残らないようにする。
-    set_hard_block_my_creeps(false);
-
-    // check number of each type creeps.
+    // 統計 (観測用)。
     let root = mem::root();
     let n = |role: &str| role_counts.get(role).copied().unwrap_or(0);
+    root.set("num_miner", n(ROLE_MINER));
+    root.set("num_hauler", n(ROLE_HAULER));
     root.set("num_worker", n(ROLE_WORKER));
-    root.set("num_harvester", n(ROLE_HARVESTER));
-    root.set("num_harvester_spawn", n(ROLE_HARVESTER_SPAWN));
-    root.set("num_harvester_mineral", n(ROLE_HARVESTER_MINERAL));
-    root.set("num_carrier_mineral", n(ROLE_CARRIER_MINERAL));
-
-
-    root.set("opt_num_attackable_short", opt_num_attackable_short);
-    root.set("opt_num_attackable_long", opt_num_attackable_long);
-
+    root.set("num_defender", n(ROLE_DEFENDER));
     root.set("total_num", total_creeps as i32);
-    root.set("cap_worker_carry", cap_worker_carry as i32);
 }

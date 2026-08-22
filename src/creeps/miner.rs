@@ -42,9 +42,14 @@ pub fn run_miner(creep: &Creep) {
         Some(s) => s.clone(),
         None => {
             // まだ担当が無い。他の採掘者が就いていない source を選ぶ。
+            // 寿命が近い採掘者の担当は「空き」とみなす。先行生産された後継が
+            // 同じ source へ向かい、旧個体の死と同時に引き継ぐため。
             let taken: Vec<String> = screeps::game::creeps()
                 .values()
                 .filter(|c| c.name() != name)
+                .filter(|c| {
+                    c.ticks_to_live().unwrap_or(u32::MAX) >= super::MINER_PRESPAWN_LEAD
+                })
                 .filter_map(|c| c.memory().string("mine_at").ok().flatten())
                 .collect();
 

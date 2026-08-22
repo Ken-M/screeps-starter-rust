@@ -117,10 +117,10 @@ fn check_safe_mode(spawn: &screeps::objects::StructureSpawn) {
 
 /// ロールに合わせた body を組む。
 ///
-/// 旧実装は全 creep に同じ汎用構成 (MOVE/MOVE/CARRY/WORK の繰り返し) を配っていた。
-/// 静的採掘者は動かないので MOVE は1個で足り、その分を WORK に回せる。運搬者は
-/// 掘らないので WORK が要らず、CARRY と MOVE だけ積める。同じエネルギーで
-/// 仕事量が大きく変わる。
+/// 旧実装は全 creep に同じ汎用構成 (MOVE/MOVE/CARRY/WORK の繰り返し) を配り、
+/// さらに総数の 1/3 に攻撃パーツを混ぜていた。ハイブリッド body は攻撃も経済も
+/// 中途半端で高くつく。ロールごとに最適な構成を組み、戦闘 body は defender
+/// 専用にする。
 fn build_body(role: &str, energy: u32) -> Vec<Part> {
     match role {
         crate::creeps::ROLE_MINER => {
@@ -146,264 +146,134 @@ fn build_body(role: &str, energy: u32) -> Vec<Part> {
 
         crate::creeps::ROLE_HAULER | crate::creeps::ROLE_CARRIER_MINERAL => {
             // 掘らないので CARRY と MOVE だけ。平地で満載でも全速が出る 1:1。
-            let unit = [Part::Carry, Part::Move];
-            let unit_cost: u32 = unit.iter().map(|p| p.cost()).sum();
-            let mut body = Vec::new();
-            let mut left = energy;
-            while body.len() + unit.len() <= screeps::constants::MAX_CREEP_SIZE as usize
-                && left >= unit_cost
-            {
-                body.extend(unit.iter().cloned());
-                left -= unit_cost;
+            unit_body(&[Part::Carry, Part::Move], energy)
+        }
+
+        crate::creeps::ROLE_DEFENDER => {
+            // 戦闘専用。MOVE を前に並べ、被弾はまず MOVE が受ける
+            // (ATTACK が残っていれば反撃は続けられる)。
+            let unit_cost = Part::Move.cost() + Part::Attack.cost();
+            let n = (energy / unit_cost) as usize;
+            let n = n.min(screeps::constants::MAX_CREEP_SIZE as usize / 2);
+            if n == 0 {
+                return Vec::new();
             }
+            let mut body = vec![Part::Move; n];
+            body.extend(std::iter::repeat(Part::Attack).take(n));
             body
         }
 
-        // それ以外は従来どおりの汎用構成。呼び出し側が組む。
-        _ => Vec::new(),
+        // worker とその他は汎用構成。平地で満載でも全速の 2:1:1。
+        _ => unit_body(&[Part::Move, Part::Move, Part::Carry, Part::Work], energy),
     }
+}
+
+/// 単位構成を予算いっぱいまで繰り返す。
+fn unit_body(unit: &[Part], energy: u32) -> Vec<Part> {
+    let unit_cost: u32 = unit.iter().map(|p| p.cost()).sum();
+    let mut body = Vec::new();
+    let mut left = energy;
+    while body.len() + unit.len() <= screeps::constants::MAX_CREEP_SIZE as usize
+        && left >= unit_cost
+    {
+        body.extend_from_slice(unit);
+        left -= unit_cost;
+    }
+    body
 }
 
 pub fn do_spawn() {
     let colony = crate::creeps::ColonyState::observe();
     let num_total_creep = colony.total_creeps;
 
-    if num_total_creep >= MAX_NUM_OF_CREEPS as i32 {
-        return;
-    }
-
-    let root = mem::root();
-
-    let _num_upgrader: i32 = root.i32("num_upgrader").unwrap_or(Some(0)).unwrap_or(0);
-    let _num_builder: i32 = root.i32("num_builder").unwrap_or(Some(0)).unwrap_or(0);
-    let _num_harvester: i32 = root.i32("num_harvester").unwrap_or(Some(0)).unwrap_or(0);
-    let _num_harvester_spawn: i32 = root
-        .i32("num_harvester_spawn")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let _num_harvester_mineral: i32 = root
-        .i32("num_harvester_mineral")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let _num_carrier_mineral: i32 = root
-        .i32("num_carrier_mineral")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let _num_repairer: i32 = root.i32("num_repairer").unwrap_or(Some(0)).unwrap_or(0);
-
-    let opt_num_attackable_short: i32 = root
-        .i32("opt_num_attackable_short")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-    let opt_num_attackable_long: i32 = root
-        .i32("opt_num_attackable_long")
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
-
-    let cap_worker_carry: i32 = root.i32("cap_worker_carry").unwrap_or(Some(0)).unwrap_or(0);
+    // 人口の上限はロール目標の合計。
+    //
+    // 旧実装は MAX_NUM_OF_CREEPS = 14 の固定値だった。ロール目標が構造から
+    // 決まるようになった今、目標の合計が「必要な人口」そのものであり、
+    // 固定上限は目標との間で矛盾を起こすだけになった (実際に目標合計16に対し
+    // 上限14で、優先度下位の worker が恒常的に2体不足していた)。
+    let population_target = crate::creeps::total_role_target(&colony);
 
     for spawn in game::spawns().values() {
-        info!("running spawn {}", spawn.name());
+        debug!("running spawn {}", spawn.name());
 
         check_safe_mode(&spawn);
 
-        //check energy can be used.
-        let all_structures = spawn
-            .room()
-            .expect("room is not visible to you")
-            .find(find::STRUCTURES, None);
-
-        let mut sum_energy = spawn.store().get_used_capacity(Some(ResourceType::Energy));
-        let mut extention_cap = spawn.store().get_capacity(Some(ResourceType::Energy));
-
-        for structure in all_structures {
-            match structure {
-                StructureObject::StructureExtension(extention) => {
-                    if extention.my() == true {
-                        sum_energy += extention
-                            .store()
-                            .get_used_capacity(Some(ResourceType::Energy));
-                        extention_cap +=
-                            extention.store().get_capacity(Some(ResourceType::Energy));
-                    }
-                }
-                _ => {
-                    // other structure
-                }
-            }
+        if num_total_creep >= population_target {
+            continue;
         }
 
-        let body_unit = [Part::Move, Part::Move, Part::Carry, Part::Work];
-        let body_short_atk_unit = [Part::Move, Part::Attack];
-        let body_long_atk_unit = [Part::Move, Part::RangedAttack];
+        // 生産中の spawn は body 計算をしても無駄。
+        if spawn.spawning().is_some() {
+            continue;
+        }
 
-        let body_cost: u32 = body_unit.iter().map(|p| p.cost()).sum();
-        let body_short_atk_cost: u32 = body_short_atk_unit.iter().map(|p| p.cost()).sum();
-        let body_long_atk_cost: u32 = body_long_atk_unit.iter().map(|p| p.cost()).sum();
+        let Some(room) = spawn.room() else {
+            continue;
+        };
 
-        let body_cost_vec = vec![body_cost, body_short_atk_cost, body_long_atk_cost];
-        let _min_cost = body_cost_vec.iter().min().unwrap();
+        // この tick に使えるエネルギーと、部屋の理論上限 (spawn + extension)。
+        let available = room.energy_available();
+        let capacity = room.energy_capacity_available();
 
-        let mut body = Vec::new();
+        let role = crate::creeps::most_needed_role(&colony);
 
-        let available_energy = sum_energy;
-        debug!("spawn calc sum_energy:{:?}", sum_energy);
-        let min_basic_body_set = std::cmp::min(
-            ((cap_worker_carry as f64 * CAP_WORKER_CARRY_COEFF) / (body_cost as f64)) as u32,
-            ((extention_cap as f64) / (body_cost as f64)) as u32,
-        );
+        // 原則: 部屋の上限いっぱいの body を設計し、貯まるまで待つ。
+        // 小さい creep の量産より、同じエネルギーで大きい creep を作るほうが
+        // body あたりの効率 (寿命1500tickに対する生産時間の比も含め) が良い。
+        // ただし人口が安全下限を割っているときは待たず、今あるぶんで即座に出す。
+        let budget = if num_total_creep < EMERGENCY_CREEP_FLOOR {
+            available
+        } else {
+            capacity
+        };
 
-        info!("min basic body set:{:?}", min_basic_body_set);
+        let body = build_body(role, budget);
+        if body.is_empty() {
+            continue;
+        }
 
-        // 「大きい body が組めるまでエネルギーを貯めて待つ」ゲート。
-        //
-        // 旧実装は外側に恒真の if を被せていた (切り捨てた商を掛け戻すので必ず両辺以下)
-        // ため、実質「sum_energy が閾値未満なら生産しない」だけだった。定常状態では
-        // cap_worker_carry が 1000 を超えるので 1500 エネルギー貯まるまで生産が止まり、
-        // creep が死んで数が減っている最中ほど収入が落ちて閾値に届かなくなる、という
-        // 負のスパイラルに入り得た。
-        //
-        // creep が安全下限を割っているときは待たず、最小構成でもすぐ出す。
-        if (num_total_creep >= EMERGENCY_CREEP_FLOOR)
-            && (sum_energy < body_cost * min_basic_body_set)
-        {
-            info!(
-                "waiting for {} energy to build a full-size creep",
-                body_cost * min_basic_body_set
+        let cost: u32 = body.iter().map(|p| p.cost()).sum();
+        if cost > available {
+            debug!(
+                "waiting for {} energy to spawn {} ({} available)",
+                cost, role, available
             );
             continue;
         }
 
-        // とりあえず基本セットをつける.
-        if sum_energy >= body_cost {
-            body.extend(body_unit.iter().cloned());
-            sum_energy -= body_cost;
-        } else {
-            // 基本セット分だけEnergyがたまってなければまた次回.
-            continue;
-        }
+        // create a unique name, spawn.
+        let name_base = game::time();
+        let mut additional = 0;
+        let res = loop {
+            let name = format!("{}-{}", name_base, additional);
+            debug!("try spawn {:?} as {}", body, role);
 
-        // 長距離攻撃がたりなければ装備.
-        if opt_num_attackable_long < std::cmp::max(1, num_total_creep / 3) {
-            if sum_energy >= body_long_atk_cost {
-                let mut count = 0;
+            // ロールを生成時に書き込む。creep_loop 側の割り当てを待たずに
+            // 最初の tick から意図した仕事に就ける。
+            let mem_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &mem_obj,
+                &wasm_bindgen::JsValue::from_str("role"),
+                &wasm_bindgen::JsValue::from_str(role),
+            );
+            let opts = SpawnOptions::new().memory(mem_obj.into());
 
-                loop {
-                    count += 1;
-                    // 次に足すユニットを先に決めてから、そのサイズで上限を検査する。
-                    let next_is_basic = count % 3 == 0;
-                    let (next_len, next_cost) = if next_is_basic {
-                        (body_unit.len(), body_cost)
-                    } else {
-                        (body_long_atk_unit.len(), body_long_atk_cost)
-                    };
-                    if sum_energy < next_cost
-                        || body.len() + next_len > screeps::constants::MAX_CREEP_SIZE as usize
-                    {
-                        break;
-                    }
-                    if next_is_basic {
-                        body.extend(body_unit.iter().cloned());
-                    } else {
-                        body.extend(body_long_atk_unit.iter().cloned());
-                    }
-                    sum_energy -= next_cost;
-                }
+            let res = spawn.spawn_creep_with_options(&body, &name, &opts);
+
+            if res == Err(SpawnCreepErrorCode::NameExists) {
+                additional += 1;
             } else {
-                if ((opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3))
-                    && (extention_cap > (body_long_atk_cost + body_cost))
-                {
-                    continue;
-                }
+                break res;
             }
+        };
 
-        // 短距離攻撃が足りなければ装備.
-        } else if opt_num_attackable_short < std::cmp::max(1, num_total_creep / 3) {
-            if sum_energy >= body_short_atk_cost {
-                let mut count = 0;
-
-                loop {
-                    count += 1;
-                    // 次に足すユニットを先に決めてから、そのサイズで上限を検査する。
-                    let next_is_basic = count % 3 == 0;
-                    let (next_len, next_cost) = if next_is_basic {
-                        (body_unit.len(), body_cost)
-                    } else {
-                        (body_short_atk_unit.len(), body_short_atk_cost)
-                    };
-                    if sum_energy < next_cost
-                        || body.len() + next_len > screeps::constants::MAX_CREEP_SIZE as usize
-                    {
-                        break;
-                    }
-
-                    if next_is_basic {
-                        body.extend(body_unit.iter().cloned());
-                    } else {
-                        body.extend(body_short_atk_unit.iter().cloned());
-                    }
-                    sum_energy -= next_cost;
-                }
-            } else {
-                if ((opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3))
-                    && (extention_cap > (body_short_atk_cost + body_cost))
-                {
-                    continue;
-                }
+        match res {
+            Err(e) => {
+                info!("couldn't spawn: {:?}", e);
             }
-        }
-
-        // あとは可能な限り基本セット.
-        let mut set_num = sum_energy / body_cost;
-
-        while (set_num > 0)
-            && ((body.len() + body_unit.len()) <= screeps::constants::MAX_CREEP_SIZE as usize)
-        {
-            body.extend(body_unit.iter().cloned());
-            set_num -= 1;
-        }
-
-        // 最も不足しているロールを先に決め、それに合う body を組む。
-        // 専用 body が無いロール (汎用作業者など) は上で組んだ body を使う。
-        let role = crate::creeps::most_needed_role(&colony);
-        // 専用 body の予算は、今この tick に実際に使えるエネルギー。
-        let specialized = build_body(role, available_energy);
-        let body = if specialized.is_empty() { body } else { specialized };
-
-        if !body.is_empty() {
-            // create a unique name, spawn.
-            let name_base = game::time();
-            let mut additional = 0;
-            let res = loop {
-                let name = format!("{}-{}", name_base, additional);
-                debug!("try spawn {:?} as {}", body, role);
-
-                // ロールを生成時に書き込む。creep_loop 側の割り当てを待たずに
-                // 最初の tick から意図した仕事に就ける。
-                let mem = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(
-                    &mem,
-                    &wasm_bindgen::JsValue::from_str("role"),
-                    &wasm_bindgen::JsValue::from_str(role),
-                );
-                let opts = SpawnOptions::new().memory(mem.into());
-
-                let res = spawn.spawn_creep_with_options(&body, &name, &opts);
-
-                if res == Err(SpawnCreepErrorCode::NameExists) {
-                    additional += 1;
-                } else {
-                    break res;
-                }
-            };
-
-            match res {
-                Err(e) => {
-                    info!("couldn't spawn: {:?}", e);
-                }
-                Ok(()) => {
-                    info!("spawn {} as {:?}", role, body);
-                }
+            Ok(()) => {
+                info!("spawn {} as {:?}", role, body);
             }
         }
     }

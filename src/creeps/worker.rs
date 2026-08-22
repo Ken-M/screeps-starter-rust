@@ -38,6 +38,15 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
         return;
     }
 
+    // RCL 3 への傾斜。タワーが解禁されるまで、このコロニーの安全は
+    // 「誰も攻めてこないこと」だけに依存している (セーフモード残ゼロ)。
+    // RCL 3 未満の間は worker の約半数をアップグレードへ回す。
+    // 名前のハッシュで決めるので、指名は creep の生涯を通じて安定する。
+    if rcl_below_3(creep) && name_parity(creep) {
+        super::upgrader::run_upgrader(creep);
+        return;
+    }
+
     let summary = work_summary();
 
     if summary.has_construction {
@@ -52,6 +61,19 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
 
     debug!("{} has no build/repair work; upgrading", creep.name());
     super::upgrader::run_upgrader(creep);
+}
+
+fn rcl_below_3(creep: &Creep) -> bool {
+    creep
+        .room()
+        .and_then(|r| r.controller())
+        .map(|c| c.my() && c.level() < 3)
+        .unwrap_or(false)
+}
+
+/// creep 名から安定した2値を得る。worker の半数を選ぶのに使う。
+fn name_parity(creep: &Creep) -> bool {
+    creep.name().bytes().map(|b| b as u32).sum::<u32>() % 2 == 0
 }
 
 /// controller の downgrade タイマーが危険域にあるか。
