@@ -46,6 +46,11 @@ const ROLE_REBALANCE_PER_TICK: i32 = 1;
 /// miner は MOVE 1 なので4倍遅い) + 余裕。
 pub const MINER_PRESPAWN_LEAD: u32 = 250;
 
+/// 滞留エネルギーがこの量を超えるごとに worker を1体追加する。
+/// worker 1体 (WORK 2 前後) が寿命 1500 tick で消費できる量の目安より
+/// やや小さめに取り、滞留に対して増員が先行するようにする。
+const WORKER_SURPLUS_ENERGY_STEP: i32 = 1500;
+
 /// ロール構成を決めるのに要る、その tick のコロニーの状況。
 pub struct ColonyState {
     /// 見えている creep の総数。
@@ -65,6 +70,10 @@ pub struct ColonyState {
     /// 生きている miner / hauler の実数。ロジスティクス崩壊の検知に使う。
     pub num_miners: i32,
     pub num_haulers: i32,
+    /// 滞留している余剰エネルギー (container / storage の在庫 + 地面の落下分)。
+    /// spawn / extension は生産用の備蓄なので数えない。
+    /// worker の増員判断に使う: 採取が消費を上回っている間はここが積み上がる。
+    pub energy_backlog: i32,
 }
 
 thread_local! {
@@ -97,17 +106,34 @@ impl ColonyState {
         let mut has_extractor = false;
         let mut total_sources = 0;
         let mut hostiles_present = false;
+        let mut energy_backlog = 0;
 
         for room in game::rooms().values() {
             if room.terminal().is_some() {
                 has_terminal = true;
             }
 
-            if room_structures(&room)
-                .iter()
-                .any(|s| s.structure_type() == screeps::StructureType::Extractor)
-            {
-                has_extractor = true;
+            for structure in room_structures(&room).iter() {
+                match structure.structure_type() {
+                    screeps::StructureType::Extractor => has_extractor = true,
+                    screeps::StructureType::Container | screeps::StructureType::Storage => {
+                        if let Some(store) = structure.as_has_store() {
+                            energy_backlog += store
+                                .store()
+                                .get_used_capacity(Some(screeps::ResourceType::Energy))
+                                as i32;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // 採掘者が container 満杯時に溢れさせた分。放置するたび毎tick減衰で
+            // 蒸発するので、これが積もっている = 消費側の人手不足のサイン。
+            for resource in room.find(screeps::find::DROPPED_RESOURCES, None) {
+                if resource.resource_type() == screeps::ResourceType::Energy {
+                    energy_backlog += resource.amount() as i32;
+                }
             }
 
             total_sources += room.find(screeps::find::SOURCES, None).len() as i32;
@@ -153,8 +179,22 @@ impl ColonyState {
             miners_expiring,
             num_miners,
             num_haulers,
+            energy_backlog,
         }
     }
+}
+
+/// 余剰エネルギーによる worker の増員数。
+///
+/// 実測 (RCL2, source 2): 基本の worker 5 では消費が採取 20/tick に追いつかず、
+/// container 2基が満杯 (2000×2) のまま地面に 6000 超が積もり、減衰で毎tick
+/// 数エネルギーを捨て続けていた。滞留量に比例して worker を足し、余剰を
+/// アップグレード進捗へ変換する。
+///
+/// 滞留が減れば目標も自然に下がり、過剰分は寿命切れで消えるので発振しない
+/// (spawn は目標を超えては生産しない)。
+fn surplus_workers(state: &ColonyState) -> i32 {
+    (state.energy_backlog / WORKER_SURPLUS_ENERGY_STEP).min(state.total_sources * 3)
 }
 
 /// 目標のロール構成。優先度の高い順に並べる。
@@ -172,7 +212,12 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
         // 運搬。source からの搬出2系統 + 拠点内の補給に1〜2体。
         (ROLE_HAULER, state.total_sources + 2),
         // 余剰労働力 (建設・修理・アップグレード)。
-        (ROLE_WORKER, state.total_sources * 2 + 1),
+        // 基本数 + エネルギーが滞留しているぶんの増員。増員分は主に
+        // アップグレードへ流れる (建設サイトが無ければ worker は upgrade する)。
+        (
+            ROLE_WORKER,
+            state.total_sources * 2 + 1 + surplus_workers(state),
+        ),
         // 鉱物系は Extractor (RCL6) があって初めて成立する。
         // 注意: 旧世代の採取ステートマシン退役に伴い、鉱物の採取側は
         // 未実装に戻っている。Extractor 解禁 (RCL6) までに mineral 専用の
@@ -501,7 +546,16 @@ mod tests {
             miners_expiring: expiring,
             num_miners: 0,
             num_haulers: 0,
+            energy_backlog: 0,
         }
+    }
+
+    fn worker_target(st: &ColonyState) -> i32 {
+        role_targets(st)
+            .iter()
+            .find(|(n, _)| *n == ROLE_WORKER)
+            .unwrap()
+            .1
     }
 
     #[test]
@@ -533,5 +587,29 @@ mod tests {
         let base = total_role_target(&state(2, false, 0));
         let bumped = total_role_target(&state(2, false, 1));
         assert_eq!(bumped, base + 1);
+    }
+
+    #[test]
+    fn エネルギーが滞留するとworkerが増える() {
+        let mut st = state(2, false, 0);
+        let base = worker_target(&st);
+
+        // 実測時の状況を再現: container 満杯 2000×2 + 地面 6000 = 10000。
+        st.energy_backlog = 10_000;
+        assert_eq!(worker_target(&st), base + 6);
+
+        // 滞留が掃ければ基本数に戻る。
+        st.energy_backlog = 1_400;
+        assert_eq!(worker_target(&st), base);
+    }
+
+    #[test]
+    fn 滞留による増員には上限がある() {
+        let mut st = state(2, false, 0);
+        let base = worker_target(&st);
+
+        // storage が積み上がる将来 (RCL4+) でも無制限には増やさない。
+        st.energy_backlog = 1_000_000;
+        assert_eq!(worker_target(&st), base + st.total_sources * 3);
     }
 }
