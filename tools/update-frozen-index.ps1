@@ -29,7 +29,7 @@ if (-not (Test-Path (Join-Path $IndexPath ".git"))) {
 }
 
 Write-Host "fetching crates.io-index (master)..."
-git -C $IndexPath fetch origin master --depth=100000 --quiet
+git -C $IndexPath fetch origin master --depth=100000 --prune --quiet
 
 $rev = git -C $IndexPath rev-list -1 --before "$Days days ago" origin/master
 
@@ -55,3 +55,34 @@ if (-not $rev) {
 git -C $IndexPath checkout --quiet $rev
 $when = git -C $IndexPath log -1 --format="%ci" HEAD
 Write-Host "frozen-index を $when ($rev) に固定しました (cooldown: $Days 日)"
+
+# ---- 掃除 ----
+# crates.io-index は1日あたり約8千コミット進み、しかも定期的に履歴が squash
+# される。放置すると (1) 差分オブジェクトの蓄積、(2) squash で死んだ旧履歴、
+# (3) 溜まった snapshot-* 参照が旧履歴を生かし続ける、の3経路で .git が
+# 際限なく育つ (対策前の実測で 729MB)。
+# 必要なのは「HEAD (= N日前の凍結点) から辿れる直近の履歴」だけなので、
+# 使い終わった参照を捨ててから到達不能オブジェクトを回収する。
+
+# 今回の凍結点が乗っている snapshot 以外の snapshot 参照を削除する。
+$keep = git -C $IndexPath branch -r --contains $rev 2>$null |
+    ForEach-Object { $_.Trim() }
+
+git -C $IndexPath for-each-ref --format="%(refname:short)" "refs/remotes/origin/snapshot-*" |
+    Where-Object { $keep -notcontains $_ } |
+    ForEach-Object {
+        Write-Host "古い snapshot 参照を削除: $_"
+        git -C $IndexPath branch -rd $_ | Out-Null
+    }
+
+# ローカル master は使わない (常に detached HEAD 運用) ので、残っていれば捨てる。
+git -C $IndexPath branch -D master 2>$null | Out-Null
+
+# reflog を捨て、到達不能オブジェクトを即時回収する。
+git -C $IndexPath reflog expire --expire=now --all
+Write-Host "git gc を実行中 (初回は数分かかることがあります)..."
+git -C $IndexPath gc --prune=now --quiet
+
+$packSize = (Get-ChildItem (Join-Path $IndexPath ".git\objects\pack") -Filter *.pack |
+    Measure-Object -Property Length -Sum).Sum / 1MB
+Write-Host ("掃除後の pack サイズ: {0:N0} MB" -f $packSize)
