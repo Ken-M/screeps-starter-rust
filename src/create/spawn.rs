@@ -12,6 +12,11 @@ use screeps::{find, game, Part, StructureType};
 /// 「大きい creep を待つ」判断は、艦隊に余裕があるときだけ許される。
 const EMERGENCY_CREEP_FLOOR: i32 = 4;
 
+/// 回復段階 (人口が目標の 2/3 未満) の設計予算の下限。
+/// これ以上貯まっていれば手持ちで即生産する。基本ユニット1個 (250) より
+/// 少し上、spawn の自己回復上限 (300) と同じ。
+const RECOVERY_MIN_BUDGET: u32 = 300;
+
 /// セーフモードを張るかを判定して、必要なら発動する。
 ///
 /// 旧実装は「spawnのHPが満タンでない」「creep数が上限の1/3未満」「攻撃パーツ持ちが0」
@@ -231,12 +236,34 @@ pub fn do_spawn() {
         let logistics_down = colony.num_miners == 0 || colony.num_haulers == 0;
         let emergency = num_total_creep < EMERGENCY_CREEP_FLOOR || logistics_down;
 
-        let budget = if emergency { available } else { capacity };
+        // 回復段階: 人口が目標の 2/3 未満。
+        //
+        // 「緊急=即時生産」と「平時=容量いっぱいで待つ」の二値だと、崩壊からの
+        // 回復が這う。緊急モードが最小個体を1体作って解除された後、
+        // 「容量500の body が買えるまで待つ」に戻るが、最小個体の細い収入では
+        // そこまでなかなか届かない (実測: エネルギー364/500で横ばい、生産なし)。
+        // 回復中は完璧な body を待たず、そこそこの body を数で揃えて
+        // 収入自体を立て直す。
+        let recovery = num_total_creep * 3 < population_target * 2;
+
+        let budget = if emergency {
+            available
+        } else if recovery {
+            // 300 以上貯まっていれば手持ちで即生産。未満なら 300 まで待つ。
+            available.max(RECOVERY_MIN_BUDGET).min(capacity)
+        } else {
+            capacity
+        };
 
         if emergency {
             warn!(
                 "emergency spawn mode: total={} miners={} haulers={} available={}",
                 num_total_creep, colony.num_miners, colony.num_haulers, available
+            );
+        } else if recovery {
+            info!(
+                "recovery spawn mode: total={}/{} available={}",
+                num_total_creep, population_target, available
             );
         }
 
