@@ -24,6 +24,24 @@ use screeps::Creep;
 const DOWNGRADE_GUARD_RATIO: f64 = 0.5;
 
 pub fn run_worker(creep: &Creep, force_upgrade: bool) {
+    // まずエネルギー。空荷では建設もアップグレードもできない。
+    //
+    // 旧世代の採取ステートマシンは worker 系のエネルギー調達も担っていたが、
+    // 退役時にその代替を用意し忘れ、worker が空荷のままタスクを試みて失敗し
+    // 立ち尽くす回帰が起きた (実測: 部屋のエネルギー14/450、progress ほぼ停止)。
+    // 調達先は container / storage / 地面。spawn と extension は生産用の
+    // 備蓄なので絶対に引き出さない。
+    if creep
+        .store()
+        .get_used_capacity(Some(screeps::ResourceType::Energy))
+        == 0
+    {
+        if let Some(room) = creep.room() {
+            super::hauler::collect_energy(creep, &room);
+        }
+        return;
+    }
+
     // 安全弁: downgrade が近いなら何を置いてもアップグレード。
     if controller_needs_rescue(creep) {
         debug!("{} rescuing controller from downgrade", creep.name());

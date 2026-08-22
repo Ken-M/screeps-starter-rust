@@ -24,7 +24,7 @@ pub fn run_hauler(creep: &Creep) {
 
     // 空なら拾いに行く。
     if creep.store().get_used_capacity(Some(ResourceType::Energy)) == 0 {
-        collect(creep, &room);
+        collect_energy(creep, &room);
         return;
     }
 
@@ -33,7 +33,8 @@ pub fn run_hauler(creep: &Creep) {
 }
 
 /// 拾う。近くに落ちているものを優先し、無ければ container / storage から引く。
-fn collect(creep: &Creep, room: &screeps::objects::Room) {
+/// worker もエネルギー補給に使う (spawn / extension は生産用なので触らない)。
+pub fn collect_energy(creep: &Creep, room: &screeps::objects::Room) {
     // 足下や隣に落ちている資源。採掘者が溢れさせた分がここに来る。
     for resource in room.find(find::DROPPED_RESOURCES, None).iter() {
         if resource.resource_type() != ResourceType::Energy {
