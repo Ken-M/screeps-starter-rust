@@ -32,10 +32,7 @@ pub fn run_harvester(creep: &Creep) {
     let is_harvested_from_link = creep.memory().bool("harvested_from_link");
 
     // not far extention .
-    let structures = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES, None);
+    let structures = room_structures(&creep.room().expect("room is not visible to you"));
 
     for structure in structures.iter() {
         if structure.structure_type() != StructureType::Extension {
@@ -212,10 +209,9 @@ pub fn run_harvester_spawn(creep: &Creep) {
     // tower
     debug!("check towers {}", name);
 
-    let my_towers = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES, None);
+    // 同じ部屋の建造物リストは下の extension ループでも使う。
+    // 旧実装は同一関数内で2回 find していた。
+    let my_towers = room_structures(&creep.room().expect("room is not visible to you"));
 
     for my_tower in my_towers.iter() {
         if my_tower.structure_type() == StructureType::Tower {
@@ -287,10 +283,7 @@ pub fn run_harvester_spawn(creep: &Creep) {
     }
 
     // extention.
-    let my_structures = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES, None);
+    let my_structures = &my_towers;
 
     for my_structure in my_structures.iter() {
         if my_structure.structure_type() == StructureType::Extension {
@@ -409,10 +402,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
     let is_harvested_from_storage = creep.memory().bool("harvested_from_storage");
     let is_harvested_from_terminal = creep.memory().bool("harvested_from_terminal");
 
-    let structures = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES, None);
+    let structures = room_structures(&creep.room().expect("room is not visible to you"));
 
     let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 
@@ -526,10 +516,7 @@ pub fn run_carrier_mineral(creep: &Creep) {
         return;
     }
 
-    let structures = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES, None);
+    let structures = room_structures(&creep.room().expect("room is not visible to you"));
 
     let resrouce_type_list = make_resoucetype_list(&ResourceKind::MINELALS);
 

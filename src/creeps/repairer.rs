@@ -31,10 +31,7 @@ pub fn run_repairer(creep: &Creep) {
         }
     }
 
-    let structures = &creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::STRUCTURES, None);
+    let structures = room_structures(&creep.room().expect("room is not visible to you"));
 
     let mut is_skip_repair = false;
 

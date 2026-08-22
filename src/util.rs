@@ -11,11 +11,21 @@ use screeps::prelude::*;
 use screeps::look::LookResult;
 use screeps::{game, CostMatrix, LocalCostMatrix};
 
+use std::cell::RefCell;
 use std::cmp::*;
+use std::rc::Rc;
 use std::{collections::HashMap, u32, u8};
 
 use lazy_static::lazy_static;
 use std::sync::RwLock;
+
+thread_local! {
+    /// tick 内で共有する全可視部屋の建造物リスト。詳細は `all_structures()`。
+    static STRUCTURE_CACHE: RefCell<Option<Rc<Vec<StructureObject>>>> = RefCell::new(None);
+    /// tick 内で共有する部屋ごとの建造物リスト。詳細は `room_structures()`。
+    static ROOM_STRUCTURE_CACHE: RefCell<HashMap<RoomName, Rc<Vec<StructureObject>>>> =
+        RefCell::new(HashMap::new());
+}
 
 const ROOM_SIZE_X: u8 = 50;
 const ROOM_SIZE_Y: u8 = 50;
@@ -112,6 +122,52 @@ where
     item_list
 }
 
+/// 全可視部屋の建造物リスト (tick 単位でキャッシュ)。
+///
+/// `find(STRUCTURES)` はこの AI で最も多用され、かつ最も重い呼び出し。
+/// `find_nearest_*` の内側から creep ごと・探索ごとに呼ばれるため、creep 14 体規模で
+/// 1 tick に数百回に達していた。返るオブジェクトは 1 個ずつ `structureType` getter を
+/// 通るので、JS 境界越えは数万回になる。
+///
+/// 連結結果は creep によらず同じなので、tick 内で 1 回だけ作って共有する。
+/// `Rc` で返すのは、呼び出しごとに数百個の JS ハンドルを clone しないため。
+/// キャッシュは `clear_init_flag()` が tick 先頭で捨てる。
+fn all_structures() -> Rc<Vec<StructureObject>> {
+    STRUCTURE_CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().as_ref() {
+            return Rc::clone(cached);
+        }
+
+        let mut list = Vec::new();
+        for room in game::rooms().values() {
+            list.extend(room_structures(&room).iter().cloned());
+        }
+
+        let list = Rc::new(list);
+        *cache.borrow_mut() = Some(Rc::clone(&list));
+        list
+    })
+}
+
+/// 1部屋分の建造物リスト (tick 単位でキャッシュ)。
+///
+/// 「自室だけを見たい」呼び出し側 (tower の修理対象選び、harvester の補給先探し、
+/// spawn のエネルギー集計など) 用。同じ部屋を 1 tick に何度も find し直すのを防ぐ。
+/// 特に `run_harvester_spawn` は同一関数内で 2 回 find していた。
+pub fn room_structures(room: &screeps::objects::Room) -> Rc<Vec<StructureObject>> {
+    let name = room.name();
+
+    ROOM_STRUCTURE_CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().get(&name) {
+            return Rc::clone(cached);
+        }
+
+        let list = Rc::new(room.find(find::STRUCTURES, None));
+        cache.borrow_mut().insert(name, Rc::clone(&list));
+        list
+    })
+}
+
 fn default_search_options() -> SearchOptions<fn(RoomName) -> MultiRoomCostResult> {
     SearchOptions::new(calc_room_cost as fn(RoomName) -> MultiRoomCostResult)
         .plain_cost(2)
@@ -134,6 +190,9 @@ fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
 }
 
 pub fn clear_init_flag() {
+    STRUCTURE_CACHE.with(|cache| *cache.borrow_mut() = None);
+    ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
+
     let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
     cost_matrix_cache.clear();
 
@@ -1078,10 +1137,25 @@ pub fn find_nearest_transfarable_item(
     is_except_terminal: &bool,
     is_except_link: &bool,
 ) -> SearchResults {
-    let item_list = find_all_rooms(creep, || find::STRUCTURES);
+    let item_list = all_structures();
 
     let mut find_item_list = Vec::<(StructureObject, u32)>::new();
     let resource_type_list = make_resoucetype_list(resource_kind);
+
+    // creep が実際に持っている資源型だけに絞る。
+    // 旧実装は構造物ごと・資源型ごとに creep.store() を呼び直しており、
+    // 鉱物 (41種) × 構造物 500 個で 41,000 回の JS 境界越えが発生していた。
+    // ループ不変なのでここで一度だけ確定させる。
+    let store = creep.store();
+    let held_types: Vec<ResourceType> = resource_type_list
+        .iter()
+        .copied()
+        .filter(|rt| store.get_used_capacity(Some(*rt)) > 0)
+        .collect();
+
+    if held_types.is_empty() {
+        return empty_search(creep);
+    }
 
     for chk_item in item_list.iter() {
         if chk_item.structure_type() == StructureType::Lab
@@ -1119,12 +1193,10 @@ pub fn find_nearest_transfarable_item(
             dist = 0;
         }
 
-        for resource_type in resource_type_list.iter() {
-            if creep.store().get_used_capacity(Some(*resource_type)) > 0 as u32 {
-                if check_transferable(chk_item, resource_type, None) {
-                    find_item_list.push((chk_item.clone(), dist));
-                    break;
-                }
+        for resource_type in held_types.iter() {
+            if check_transferable(chk_item, resource_type, None) {
+                find_item_list.push((chk_item.clone(), dist));
+                break;
             }
         }
     }
@@ -1146,10 +1218,25 @@ pub fn find_nearest_transfarable_terminal(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
 ) -> SearchResults {
-    let item_list = find_all_rooms(creep, || find::STRUCTURES);
+    let item_list = all_structures();
 
     let mut find_item_list = Vec::<(StructureObject, u32)>::new();
     let resource_type_list = make_resoucetype_list(resource_kind);
+
+    // creep が実際に持っている資源型だけに絞る。
+    // 旧実装は構造物ごと・資源型ごとに creep.store() を呼び直しており、
+    // 鉱物 (41種) × 構造物 500 個で 41,000 回の JS 境界越えが発生していた。
+    // ループ不変なのでここで一度だけ確定させる。
+    let store = creep.store();
+    let held_types: Vec<ResourceType> = resource_type_list
+        .iter()
+        .copied()
+        .filter(|rt| store.get_used_capacity(Some(*rt)) > 0)
+        .collect();
+
+    if held_types.is_empty() {
+        return empty_search(creep);
+    }
 
     for chk_item in item_list.iter() {
         if chk_item.structure_type() != StructureType::Terminal {
@@ -1162,12 +1249,10 @@ pub fn find_nearest_transfarable_terminal(
             dist = 0;
         }
 
-        for resource_type in resource_type_list.iter() {
-            if creep.store().get_used_capacity(Some(*resource_type)) > 0 as u32 {
-                if check_transferable(chk_item, resource_type, None) {
-                    find_item_list.push((chk_item.clone(), dist));
-                    break;
-                }
+        for resource_type in held_types.iter() {
+            if check_transferable(chk_item, resource_type, None) {
+                find_item_list.push((chk_item.clone(), dist));
+                break;
             }
         }
     }
@@ -1189,11 +1274,11 @@ pub fn find_nearest_repairable_item_hp(
     creep: &screeps::objects::Creep,
     threshold: u32,
 ) -> SearchResults {
-    let item_list = find_all_rooms(creep, || find::STRUCTURES);
+    let item_list = all_structures();
 
     let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
-    for chk_item in item_list {
+    for chk_item in item_list.iter() {
         if check_repairable(&chk_item) {
             if get_hp(&chk_item).unwrap_or(0) <= threshold {
                 find_item_list.push((chk_item.clone(), 3));
@@ -1218,11 +1303,11 @@ pub fn find_nearest_repairable_item_except_wall_dying(
     creep: &screeps::objects::Creep,
     threshold: u128,
 ) -> SearchResults {
-    let item_list = find_all_rooms(creep, || find::STRUCTURES);
+    let item_list = all_structures();
 
     let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
-    for chk_item in item_list {
+    for chk_item in item_list.iter() {
         if chk_item.structure_type() != StructureType::Wall {
             if check_repairable(&chk_item) {
                 if get_live_tickcount(&chk_item).unwrap_or(10000) as u128 <= threshold {
@@ -1252,11 +1337,11 @@ pub fn find_nearest_transferable_structure(
     max_cost: Option<f64>,
     capacity_rate: Option<f64>,
 ) -> SearchResults {
-    let item_list = find_all_rooms(creep, || find::STRUCTURES);
+    let item_list = all_structures();
 
     let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
-    for chk_item in item_list {
+    for chk_item in item_list.iter() {
         if chk_item.structure_type() == *structure_type {
             if check_transferable(&chk_item, resource_type, capacity_rate) {
                 find_item_list.push((chk_item.clone(), 1));
@@ -1380,7 +1465,7 @@ pub fn find_nearest_active_source(
             }
         } else {
             // power.
-            let item_list = find_all_rooms(creep, || find::STRUCTURES);
+            let item_list = all_structures();
 
             for chk_item in item_list.iter() {
                 if chk_item.structure_type() == StructureType::PowerBank {
@@ -1452,7 +1537,7 @@ pub fn find_nearest_stored_source(
     }
 
     if find_item_list.len() <= 0 {
-        let item_list = find_all_rooms(creep, || find::STRUCTURES);
+        let item_list = all_structures();
 
         for chk_item in item_list.iter() {
             if chk_item.structure_type() == StructureType::Container
@@ -1639,7 +1724,7 @@ pub fn find_nearest_enemy(creep: &screeps::objects::Creep, range: u32) -> Search
 }
 
 pub fn find_nearest_room_controler(creep: &screeps::objects::Creep) -> SearchResults {
-    let item_list = find_all_rooms(creep, || find::STRUCTURES);
+    let item_list = all_structures();
 
     let mut find_item_list = Vec::<(StructureObject, u32)>::new();
 
