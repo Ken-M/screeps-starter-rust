@@ -62,6 +62,9 @@ pub struct ColonyState {
     /// この分だけ miner の目標を一時的に増やし、後継を先行生産する。
     /// 旧個体が死ねば目標もカウントも同時に戻るので、恒常的な過剰にはならない。
     pub miners_expiring: i32,
+    /// 生きている miner / hauler の実数。ロジスティクス崩壊の検知に使う。
+    pub num_miners: i32,
+    pub num_haulers: i32,
 }
 
 thread_local! {
@@ -124,14 +127,19 @@ impl ColonyState {
 
         let mut total_creeps = 0;
         let mut miners_expiring = 0;
+        let mut num_miners = 0;
+        let mut num_haulers = 0;
         for creep in game::creeps().values() {
             total_creeps += 1;
             if let Ok(Some(role)) = creep.memory().string(crate::mem::keys::ROLE) {
                 if role == ROLE_MINER {
+                    num_miners += 1;
                     let ttl = creep.ticks_to_live().unwrap_or(u32::MAX);
                     if ttl < MINER_PRESPAWN_LEAD {
                         miners_expiring += 1;
                     }
+                } else if role == ROLE_HAULER {
+                    num_haulers += 1;
                 }
             }
         }
@@ -143,6 +151,8 @@ impl ColonyState {
             has_extractor,
             hostiles_present,
             miners_expiring,
+            num_miners,
+            num_haulers,
         }
     }
 }
@@ -489,6 +499,8 @@ mod tests {
             has_extractor: false,
             hostiles_present: hostiles,
             miners_expiring: expiring,
+            num_miners: 0,
+            num_haulers: 0,
         }
     }
 

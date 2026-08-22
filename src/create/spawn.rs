@@ -218,12 +218,27 @@ pub fn do_spawn() {
         // 原則: 部屋の上限いっぱいの body を設計し、貯まるまで待つ。
         // 小さい creep の量産より、同じエネルギーで大きい creep を作るほうが
         // body あたりの効率 (寿命1500tickに対する生産時間の比も含め) が良い。
-        // ただし人口が安全下限を割っているときは待たず、今あるぶんで即座に出す。
-        let budget = if num_total_creep < EMERGENCY_CREEP_FLOOR {
-            available
-        } else {
-            capacity
-        };
+        //
+        // ただし緊急時は待たず、今あるぶんで即座に出す。緊急とは:
+        // - 人口が安全下限を割った
+        // - miner または hauler がゼロ (ロジスティクス崩壊)
+        //
+        // 特に hauler ゼロは危険なデッドロックを作る。extension に補給する者が
+        // いないため使えるエネルギーは spawn の自己回復分 300 が上限になるが、
+        // 「容量 450 で設計した hauler (400)」はそれを超えていて永遠に買えない。
+        // 実際に旧世代 creep の一斉寿命切れで hauler が全滅し、人口 11 → 4 の
+        // 崩壊と生産停止が起きた。
+        let logistics_down = colony.num_miners == 0 || colony.num_haulers == 0;
+        let emergency = num_total_creep < EMERGENCY_CREEP_FLOOR || logistics_down;
+
+        let budget = if emergency { available } else { capacity };
+
+        if emergency {
+            warn!(
+                "emergency spawn mode: total={} miners={} haulers={} available={}",
+                num_total_creep, colony.num_miners, colony.num_haulers, available
+            );
+        }
 
         let body = build_body(role, budget);
         if body.is_empty() {
