@@ -83,6 +83,9 @@ pub mod keys {
     pub const UPGRADE_DUTY: &str = "upgrade_duty";
     /// 攻撃対象の座標。attacker_routine が書き、敵消滅時に消す。
     pub const ATTACK_TARGET_POS: &str = "attack_target_pos";
+    /// hauler の積み込み中フラグ。満載まで拾い、空になるまで届ける
+    /// ステートマシンの状態。run_hauler だけが読み書きする。
+    pub const FILLING: &str = "filling";
     /// ルート直下の統計値 (観測用)。creep_loop が毎tick上書きする。
     pub const NUM_MINER: &str = "num_miner";
     pub const NUM_HAULER: &str = "num_hauler";
