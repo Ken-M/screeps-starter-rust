@@ -3,16 +3,22 @@
 //! 旧 screeps-game-api 0.9 の `MemoryReference`(`.bool()` / `.i32()` / `.string()` /
 //! `.set()` / `.del()`)は 0.23 で消滅し、`creep.memory()` は素の `JsValue` を返す。
 //! 呼び出し側 (約85箇所) を書き換えずに済むよう、旧 API と同名・同シグネチャの
-//! メソッドを `JsValue` に生やす。deprecated な `screeps::memory::ROOT` への依存も
-//! `root()` に閉じ込める (0.24 系で削除されたらここだけ直せばよい)。
+//! メソッドを `JsValue` に生やす。
 
 use js_sys::Reflect;
 use wasm_bindgen::{JsCast, JsValue};
 
 /// `Memory` ルートオブジェクト。旧 `screeps::memory::root()` 相当。
+///
+/// **毎回グローバルから引き直すこと。** `screeps::memory::ROOT` は
+/// wasm-bindgen の `extern static` で、生成コードが `thread_local!` により
+/// 初回アクセス時の値を永久にキャッシュする。Screeps エンジンは tick ごとに
+/// `Memory` グローバルを差し替えるため、キャッシュされた参照へ書いても
+/// エンジンには一切反映されない (＝書き込みが黙って捨てられる)。
+/// `ROOT` が deprecated なのはこのため。
 pub fn root() -> JsValue {
-    #[allow(deprecated)]
-    screeps::memory::ROOT.clone().into()
+    Reflect::get(&js_sys::global(), &JsValue::from_str("Memory"))
+        .unwrap_or(JsValue::UNDEFINED)
 }
 
 pub trait MemoryExt {
