@@ -56,6 +56,18 @@ npm run deploy -- --server ptr --dryrun
 npm run deploy -- --server mmo
 ```
 
+## ログ収集 (運用)
+
+ゲームのコンソールログの収集は **watch-console-daemon を正とする**。
+他の仕組み (`D:\GitHub\_startup` の Remote Control 基盤など) はゲームログを扱わない。
+
+- 実体: タスクスケジューラのタスク `screeps-watch-console` (ログオン時起動・非表示)
+  → `tools/watch-console-daemon.ps1` (死活監視・自動再起動)
+  → `js_tools/watch-console.js` (WebSocket 購読)
+- 出力: `logs/mmo.log` (ゲームコンソール)、`logs/watcher-daemon.log` (デーモンの死活)。
+  どちらも上限超過で `.1` へローテートする2世代保持。
+- 操作: `Start-ScheduledTask` / `Stop-ScheduledTask -TaskName screeps-watch-console`
+
 ## Migration to 0.22
 
 Versions of [`screeps-game-api`] at 0.22 or higher are no longer compatible with the

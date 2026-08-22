@@ -22,6 +22,13 @@ if (-not $created) { exit 0 }
 $daemon_log = Join-Path $repo 'logs\watcher-daemon.log'
 New-Item -ItemType Directory -Force (Split-Path $daemon_log) | Out-Null
 
+# 再起動のたびに数行しか書かないが、それでも上限は設ける (mmo.log と同じ方針)。
+function Rotate-DaemonLog {
+    if ((Test-Path $daemon_log) -and ((Get-Item $daemon_log).Length -gt 1MB)) {
+        Move-Item $daemon_log "$daemon_log.1" -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $node) {
     Add-Content $daemon_log "$(Get-Date -Format o) fatal: node not found in PATH"
@@ -29,6 +36,7 @@ if (-not $node) {
 }
 
 while ($true) {
+    Rotate-DaemonLog
     Add-Content $daemon_log "$(Get-Date -Format o) starting watch-console (node: $node)"
     # stdout は watch-console が logs/mmo.log にも書くので捨てる。stderr は起動失敗の
     # 手がかりになるので daemon ログへ。
