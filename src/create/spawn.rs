@@ -6,9 +6,108 @@ use log::*;
 use screeps::action_error_codes::SpawnCreepErrorCode;
 use screeps::enums::StructureObject;
 use screeps::prelude::*;
-use screeps::{find, game, Part, ResourceType};
+use screeps::{find, game, Part, ResourceType, StructureType};
 
 const MAX_NUM_OF_CREEPS: u32 = 14;
+
+/// セーフモードを張るかを判定して、必要なら発動する。
+///
+/// 旧実装は「spawnのHPが満タンでない」「creep数が上限の1/3未満」「攻撃パーツ持ちが0」
+/// のOR条件だったが、どれも被攻撃を意味しない。実際に敵0体の状態で発動し、部屋唯一の
+/// セーフモードを浪費した (コスト1000ゴジウム / 効果20000tick / クールダウン50000tick)。
+///
+/// 判定を「実害の検知」に置き換える:
+///   - 攻撃能力を持つ敵が実在し、かつ
+///   - 重要建造物のHPがこのtickで実際に減った
+/// の AND。HPは前tick値をMemoryに持って差分を取る。
+fn check_safe_mode(spawn: &screeps::objects::StructureSpawn) {
+    let Some(room) = spawn.room() else {
+        return;
+    };
+    let Some(controller) = room.controller() else {
+        return;
+    };
+
+    // 重要建造物 (spawn / storage / terminal / tower) の現在HP合計。
+    let mut total_hits: u32 = 0;
+    for structure in room.find(find::STRUCTURES, None) {
+        let is_critical = matches!(
+            structure.structure_type(),
+            StructureType::Spawn
+                | StructureType::Storage
+                | StructureType::Terminal
+                | StructureType::Tower
+        );
+        if !is_critical || !crate::util::check_my_structure(&structure) {
+            continue;
+        }
+        if let Some(attackable) = structure.as_attackable() {
+            total_hits += attackable.hits();
+        }
+    }
+
+    // 前tickとの差分を取る。キーは部屋ごと。
+    let root = mem::root();
+    let key = format!("critical_hits_{}", room.name());
+    let prev_hits = root.i32(&key).unwrap_or(None);
+    root.set(&key, total_hits as i32);
+
+    // 初回 (前tick値なし) は比較できないので判定しない。
+    let Some(prev_hits) = prev_hits else {
+        return;
+    };
+    let is_damaged_now = (total_hits as i32) < prev_hits;
+
+    if !is_damaged_now {
+        return;
+    }
+
+    // 攻撃能力を持つ敵が実在するか。単なる偵察creepでは発動しない。
+    let has_armed_hostile = room.find(find::HOSTILE_CREEPS, None).iter().any(|enemy| {
+        enemy.body().iter().any(|part| {
+            part.hits() > 0
+                && matches!(
+                    part.part(),
+                    Part::Attack | Part::RangedAttack | Part::Work | Part::Heal
+                )
+        })
+    });
+
+    if !has_armed_hostile {
+        // 敵がいないのにHPが減るのは自然崩壊 (rampart等)。修理の仕事であって
+        // セーフモードの出番ではない。
+        info!(
+            "critical structures lost {} hits without armed hostiles; not a raid",
+            prev_hits - total_hits as i32
+        );
+        return;
+    }
+
+    // 発動可能な状態か。すでに発動中/クールダウン中/在庫切れなら呼ぶだけ無駄。
+    if controller.safe_mode().is_some() {
+        warn!("under attack, safe mode already active");
+        return;
+    }
+    if controller.safe_mode_cooldown().is_some() {
+        warn!("under attack, but safe mode is on cooldown");
+        return;
+    }
+    if controller.safe_mode_available() == 0 {
+        warn!("under attack, but no safe mode available");
+        return;
+    }
+
+    warn!(
+        "under attack! lost {} hits. activating safe mode ({} available)",
+        prev_hits - total_hits as i32,
+        controller.safe_mode_available()
+    );
+
+    match controller.activate_safe_mode() {
+        Ok(()) => warn!("safe mode activated"),
+        Err(e) => warn!("couldn't activate safe mode: {:?}", e),
+    }
+}
 
 pub fn do_spawn() {
     let num_total_creep = game::creeps().values().count() as i32;
@@ -50,27 +149,7 @@ pub fn do_spawn() {
     for spawn in game::spawns().values() {
         info!("running spawn {}", spawn.name());
 
-        // check got attacked.
-        if (spawn.hits() < spawn.hits_max())
-            || ((num_total_creep as u32) < MAX_NUM_OF_CREEPS / 3)
-            || ((opt_num_attackable_short + opt_num_attackable_long) <= 0)
-        {
-            info!("got attacked!!");
-
-            let my_controller = spawn
-                .room()
-                .expect("room is not visible to you")
-                .controller();
-
-            match my_controller {
-                Some(controller) => {
-                    let _ = controller.activate_safe_mode();
-                }
-                None => {
-                    //nothint to do.
-                }
-            }
-        }
+        check_safe_mode(&spawn);
 
         //check energy can be used.
         let all_structures = spawn

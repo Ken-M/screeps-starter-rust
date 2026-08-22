@@ -115,10 +115,22 @@ pub fn run_market() {
                         num_data += 1;
                     }
 
-                    if num_data > 0 {
-                        target_price = target_price / num_data as f64;
-                        target_price_own = target_price_own / num_data as f64;
+                    // 取引履歴が無い資源 (実績ゼロ、サーバリセット直後、取得失敗) では
+                    // get_history() が空を返す。このとき target_price は 0.0 のままなので、
+                    // 下の `order.price() >= target_price` が全注文で成立し、
+                    // 価格0.001のような釣り注文に在庫を全量投げてしまう。
+                    // 値付けの根拠が無い以上、この資源は売買しない。
+                    if num_data == 0 {
+                        info!("no market history for {:?}; skipping", resource);
+                        continue;
                     }
+
+                    target_price = target_price / num_data as f64;
+                    target_price_own = target_price_own / num_data as f64;
+
+                    // 平均が壊れていても最低ラインは割らない (二重の歯止め)。
+                    target_price = f64::max(target_price, MARKET_MIN_PRICE);
+                    target_price_own = f64::max(target_price_own, MARKET_MIN_PRICE);
 
                     // check buy orders.
                     let filter = LodashFilter::new();
@@ -171,23 +183,46 @@ pub fn run_market() {
                         }
 
                         if found_count < 1 {
-                            let amount =
-                                (((cur_credits * 0.5) / 0.05) / target_price_own) as u32;
-                            let amount = std::cmp::min(amount, stored_amount / 2);
-                            info!(
-                                "create a Sell deal: resource type:{:?}, amount:{:?}, price:{:?}",
-                                resource, amount, target_price_own
-                            );
-                            let ret = market::create_order(&make_order_params(
-                                OrderType::Sell,
-                                resource,
-                                target_price_own,
-                                amount,
-                                room.name(),
-                            ));
+                            // 旧実装は「クレジットの50%を手数料予算として、その予算で
+                            // 何個売れるか」を先に計算していた。target_price_own が 0 だと
+                            // +inf → as u32 が飽和して u32::MAX、cur_credits が 0 だと
+                            // 0.0/0.0 = NaN → as u32 が 0 になり、価格0での大量出品か
+                            // 「永久に出品しない」のどちらかに化けていた。
+                            //
+                            // 数量は在庫から決め、手数料が予算内かを後から検査する順序にする。
+                            let amount = stored_amount / 2;
+                            let fee = target_price_own * amount as f64 * MARKET_FEE;
+                            let fee_budget = cur_credits * MARKET_FEE_BUDGET_RATIO;
 
-                            if let Err(e) = ret {
-                                warn!("ret:{:?}", e);
+                            // 手数料が予算を超えるなら、予算に収まる数量まで削る。
+                            let amount = if fee > fee_budget {
+                                let affordable =
+                                    fee_budget / (target_price_own * MARKET_FEE);
+                                if affordable.is_finite() && affordable >= 1.0 {
+                                    std::cmp::min(amount, affordable as u32)
+                                } else {
+                                    0
+                                }
+                            } else {
+                                amount
+                            };
+
+                            if amount > 0 {
+                                info!(
+                                    "create a Sell deal: resource type:{:?}, amount:{:?}, price:{:?}",
+                                    resource, amount, target_price_own
+                                );
+                                let ret = market::create_order(&make_order_params(
+                                    OrderType::Sell,
+                                    resource,
+                                    target_price_own,
+                                    amount,
+                                    room.name(),
+                                ));
+
+                                if let Err(e) = ret {
+                                    warn!("ret:{:?}", e);
+                                }
                             }
                         }
                     }
@@ -228,10 +263,17 @@ pub fn run_market() {
                     num_data += 1;
                 }
 
-                if num_data > 0 {
-                    target_price = target_price / num_data as f64;
-                    target_price_own = target_price_own / num_data as f64;
+                // 売り側と同じく、履歴が無ければ値付けの根拠が無いので手を出さない。
+                // (買い側の受入条件は `price <= target_price` なので、target_price が
+                //  0 のままなら約定はしない。ただし target_price_own が 0 だと
+                //  価格0の買い注文を作りにいくため、ここで止める。)
+                if num_data == 0 {
+                    info!("no market history for energy; skipping buy side");
+                    continue;
                 }
+
+                target_price = target_price / num_data as f64;
+                target_price_own = target_price_own / num_data as f64;
 
                 // check sell orders.
                 let filter = LodashFilter::new();
@@ -287,24 +329,37 @@ pub fn run_market() {
                     }
 
                     if found_count < 1 {
-                        let amount = ((cur_credits * 0.7) / (target_price_own * 1.05)) as u32;
-                        let amount = std::cmp::min(amount, terminal_energy_capacity as u32 / 2);
-                        info!(
-                            "create a Buy deal: resource type:{:?}, amount:{:?}, price:{:?}",
-                            ResourceType::Energy,
-                            amount,
-                            target_price_own
-                        );
-                        let ret = market::create_order(&make_order_params(
-                            OrderType::Buy,
-                            ResourceType::Energy,
-                            target_price_own,
-                            amount,
-                            room.name(),
-                        ));
+                        // 買いは「ターミナルの空き容量の半分」を基準にし、
+                        // 支払える範囲 (クレジットの70%) まで削る。除算の分母が
+                        // 0 や NaN になる経路は上の num_data ガードで潰してあるが、
+                        // 念のため有限値だけを採用する。
+                        let amount = terminal_energy_capacity.max(0) as u32 / 2;
+                        let affordable = (cur_credits * BUY_CREDIT_BUDGET_RATIO)
+                            / (target_price_own * 1.05);
+                        let amount = if affordable.is_finite() && affordable >= 1.0 {
+                            std::cmp::min(amount, affordable as u32)
+                        } else {
+                            0
+                        };
 
-                        if let Err(e) = ret {
-                            warn!("ret:{:?}", e);
+                        if amount > 0 {
+                            info!(
+                                "create a Buy deal: resource type:{:?}, amount:{:?}, price:{:?}",
+                                ResourceType::Energy,
+                                amount,
+                                target_price_own
+                            );
+                            let ret = market::create_order(&make_order_params(
+                                OrderType::Buy,
+                                ResourceType::Energy,
+                                target_price_own,
+                                amount,
+                                room.name(),
+                            ));
+
+                            if let Err(e) = ret {
+                                warn!("ret:{:?}", e);
+                            }
                         }
                     }
                 }
