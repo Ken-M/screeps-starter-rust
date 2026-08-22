@@ -68,3 +68,43 @@ impl MemoryExt for JsValue {
         );
     }
 }
+
+/// Memory キーの一覧。
+///
+/// キーが裸の文字列リテラルで散在していると、タイポはコンパイルで捕まらず、
+/// キーのライフサイクル (誰が set し誰が del するか) も追えなくなる。
+/// 新しいキーは必ずここに定義してから使うこと。
+pub mod keys {
+    /// creep のロール名。spawn が生成時に書き、creep_loop が参照・再配分する。
+    pub const ROLE: &str = "role";
+    /// miner の担当 source ID。miner が自分で書き、死ぬまで保持する。
+    pub const MINE_AT: &str = "mine_at";
+    /// 固定アップグレード係のフラグ。creep_loop が指名・解除する。
+    pub const UPGRADE_DUTY: &str = "upgrade_duty";
+    /// 攻撃対象の座標。attacker_routine が書き、敵消滅時に消す。
+    pub const ATTACK_TARGET_POS: &str = "attack_target_pos";
+    /// ルート直下の統計値 (観測用)。creep_loop が毎tick上書きする。
+    pub const NUM_MINER: &str = "num_miner";
+    pub const NUM_HAULER: &str = "num_hauler";
+    pub const NUM_WORKER: &str = "num_worker";
+    pub const NUM_DEFENDER: &str = "num_defender";
+    pub const TOTAL_NUM: &str = "total_num";
+    /// market の巡回カウンタ。run_market が管理する。
+    pub const MARKET_COUNTER: &str = "market_counter";
+
+    /// 退役した採取ステートマシンのキー。生存 creep から掃除するためだけに残す。
+    pub const LEGACY_HARVEST_KEYS: &[&str] = &[
+        "harvesting",
+        "target_pos",
+        "target_pos_count",
+        "will_harvest_from_storage",
+        "nothing_to_harvest",
+        "harvest_retry_at",
+        "harvested_from_storage",
+        "harvested_from_terminal",
+        "harvested_from_link",
+        "fleeing_count",
+        "stuck_ticks",
+        "last_pos",
+    ];
+}

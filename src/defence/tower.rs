@@ -180,3 +180,20 @@ pub fn run_tower() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn タワー威力は距離で減衰する() {
+        assert_eq!(tower_damage_at(0), 600);
+        assert_eq!(tower_damage_at(5), 600);
+        assert_eq!(tower_damage_at(20), 150);
+        assert_eq!(tower_damage_at(49), 150);
+        // 中間は単調減少。
+        let mid = tower_damage_at(12);
+        assert!(mid < 600 && mid > 150);
+        assert!(tower_damage_at(10) > tower_damage_at(15));
+    }
+}

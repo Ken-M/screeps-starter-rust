@@ -126,7 +126,7 @@ impl ColonyState {
         let mut miners_expiring = 0;
         for creep in game::creeps().values() {
             total_creeps += 1;
-            if let Ok(Some(role)) = creep.memory().string("role") {
+            if let Ok(Some(role)) = creep.memory().string(crate::mem::keys::ROLE) {
                 if role == ROLE_MINER {
                     let ttl = creep.ticks_to_live().unwrap_or(u32::MAX);
                     if ttl < MINER_PRESPAWN_LEAD {
@@ -184,7 +184,7 @@ pub fn total_role_target(state: &ColonyState) -> i32 {
 pub fn most_needed_role(state: &ColonyState) -> &'static str {
     let mut counts: HashMap<String, i32> = HashMap::new();
     for creep in game::creeps().values() {
-        if let Ok(Some(role)) = creep.memory().string("role") {
+        if let Ok(Some(role)) = creep.memory().string(crate::mem::keys::ROLE) {
             *counts.entry(role).or_insert(0) += 1;
         }
     }
@@ -273,7 +273,7 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     let enemies = room_hostiles(&room);
 
     if enemies.is_empty() {
-        creep.memory().del("attack_target_pos");
+        creep.memory().del(crate::mem::keys::ATTACK_TARGET_POS);
         return false;
     }
 
@@ -306,7 +306,7 @@ pub fn creep_loop() {
         let cmem = creep.memory();
 
         let mut role = cmem
-            .string("role")
+            .string(crate::mem::keys::ROLE)
             .ok()
             .flatten()
             .unwrap_or_else(|| String::from("none"));
@@ -317,14 +317,11 @@ pub fn creep_loop() {
             role.as_str(),
             "harvester" | "harvester_spawn" | "builder" | "upgrader" | "repairer"
         ) {
-            cmem.del("role");
+            cmem.del(crate::mem::keys::ROLE);
             // 旧ステートマシンの残骸も掃除しておく。
-            cmem.del("harvesting");
-            cmem.del("target_pos");
-            cmem.del("target_pos_count");
-            cmem.del("will_harvest_from_storage");
-            cmem.del("nothing_to_harvest");
-            cmem.del("harvest_retry_at");
+            for key in crate::mem::keys::LEGACY_HARVEST_KEYS {
+                cmem.del(key);
+            }
             role = String::from("none");
         }
 
@@ -399,9 +396,9 @@ pub fn creep_loop() {
 
             if let Some(victim) = victim {
                 info!("rebalance {}: {} -> {}", victim.name, surplus_role, role);
-                victim.creep.memory().set("role", *role);
-                victim.creep.memory().del("upgrade_duty");
-                victim.creep.memory().del("mine_at");
+                victim.creep.memory().set(crate::mem::keys::ROLE, *role);
+                victim.creep.memory().del(crate::mem::keys::UPGRADE_DUTY);
+                victim.creep.memory().del(crate::mem::keys::MINE_AT);
                 victim.role = role.to_string();
 
                 *role_counts.entry(surplus_role.to_string()).or_insert(0) -= 1;
@@ -416,11 +413,11 @@ pub fn creep_loop() {
     // 指名が移ると、controller までの道中で指名が外れて誰も到着しない)。
     let duty_alive = roster
         .iter()
-        .any(|i| i.role == ROLE_WORKER && i.creep.memory().bool("upgrade_duty"));
+        .any(|i| i.role == ROLE_WORKER && i.creep.memory().bool(crate::mem::keys::UPGRADE_DUTY));
     if !duty_alive {
         if let Some(candidate) = roster.iter().find(|i| i.role == ROLE_WORKER) {
             info!("{} takes upgrade duty", candidate.name);
-            candidate.creep.memory().set("upgrade_duty", true);
+            candidate.creep.memory().set(crate::mem::keys::UPGRADE_DUTY, true);
         }
     }
 
@@ -435,7 +432,7 @@ pub fn creep_loop() {
         // ロールが未割り当てなら今決める。
         if info.role == "none" {
             let role = pick_role(info, &targets, &role_counts);
-            info.creep.memory().set("role", role.as_str());
+            info.creep.memory().set(crate::mem::keys::ROLE, role.as_str());
             *role_counts.entry(role.clone()).or_insert(0) += 1;
             info.role = role;
         }
@@ -453,7 +450,7 @@ pub fn creep_loop() {
             "hauler" => hauler::run_hauler(creep),
             "defender" => defender::run_defender(creep),
             "worker" => {
-                worker::run_worker(creep, creep.memory().bool("upgrade_duty"));
+                worker::run_worker(creep, creep.memory().bool(crate::mem::keys::UPGRADE_DUTY));
             }
 
             // 鉱物系: 旧採取ステートマシンの退役により採取側が未実装。
@@ -473,9 +470,56 @@ pub fn creep_loop() {
     // 統計 (観測用)。
     let root = mem::root();
     let n = |role: &str| role_counts.get(role).copied().unwrap_or(0);
-    root.set("num_miner", n(ROLE_MINER));
-    root.set("num_hauler", n(ROLE_HAULER));
-    root.set("num_worker", n(ROLE_WORKER));
-    root.set("num_defender", n(ROLE_DEFENDER));
-    root.set("total_num", total_creeps as i32);
+    root.set(crate::mem::keys::NUM_MINER, n(ROLE_MINER));
+    root.set(crate::mem::keys::NUM_HAULER, n(ROLE_HAULER));
+    root.set(crate::mem::keys::NUM_WORKER, n(ROLE_WORKER));
+    root.set(crate::mem::keys::NUM_DEFENDER, n(ROLE_DEFENDER));
+    root.set(crate::mem::keys::TOTAL_NUM, total_creeps as i32);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(sources: i32, hostiles: bool, expiring: i32) -> ColonyState {
+        ColonyState {
+            total_creeps: 10,
+            total_sources: sources,
+            has_terminal: false,
+            has_extractor: false,
+            hostiles_present: hostiles,
+            miners_expiring: expiring,
+        }
+    }
+
+    #[test]
+    fn 平時は防衛と鉱物がゼロ() {
+        let targets = role_targets(&state(2, false, 0));
+        let get = |r: &str| targets.iter().find(|(n, _)| *n == r).unwrap().1;
+        assert_eq!(get(ROLE_DEFENDER), 0);
+        assert_eq!(get(ROLE_HARVESTER_MINERAL), 0);
+        assert_eq!(get(ROLE_CARRIER_MINERAL), 0);
+    }
+
+    #[test]
+    fn 敵がいれば防衛が立ち_最優先に並ぶ() {
+        let targets = role_targets(&state(2, true, 0));
+        assert_eq!(targets[0], (ROLE_DEFENDER, 2));
+    }
+
+    #[test]
+    fn 人口目標はロール目標の合計と一致する() {
+        let st = state(2, false, 0);
+        let sum: i32 = role_targets(&st).iter().map(|(_, n)| n).sum();
+        assert_eq!(total_role_target(&st), sum);
+        // source 2 なら miner2 + hauler4 + worker5 = 11
+        assert_eq!(sum, 11);
+    }
+
+    #[test]
+    fn 寿命間近のminerの数だけ目標が一時的に増える() {
+        let base = total_role_target(&state(2, false, 0));
+        let bumped = total_role_target(&state(2, false, 1));
+        assert_eq!(bumped, base + 1);
+    }
 }

@@ -235,12 +235,12 @@ pub fn run_market() {
 
     let root = mem::root();
 
-    let mut market_count = root.i32("market_counter").unwrap_or(Some(0)).unwrap_or(0);
+    let mut market_count = root.i32(crate::mem::keys::MARKET_COUNTER).unwrap_or(Some(0)).unwrap_or(0);
     market_count += 1;
     if market_count >= 18000 {
         market_count = 0;
     }
-    root.set("market_counter", market_count);
+    root.set(crate::mem::keys::MARKET_COUNTER, market_count);
 
     // クレジットは全部屋で共有する1つの財布。
     //

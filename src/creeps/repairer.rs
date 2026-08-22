@@ -82,9 +82,6 @@ pub fn run_repairer_task(creep: &Creep) {
                             return;
                         }
 
-                        if r == Err(CreepRepairErrorCode::NotInRange) {
-                            is_skip_repair = true;
-                        }
                     }
                 }
             }

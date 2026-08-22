@@ -1,15 +1,12 @@
-use crate::constants::*;
 use std::usize;
 
 use crate::mem::{self, MemoryExt};
 use log::*;
 use screeps::action_error_codes::SpawnCreepErrorCode;
-use screeps::enums::StructureObject;
 use screeps::prelude::*;
 use screeps::objects::SpawnOptions;
-use screeps::{find, game, Part, ResourceType, StructureType};
+use screeps::{find, game, Part, StructureType};
 
-const MAX_NUM_OF_CREEPS: u32 = 14;
 
 /// この体数を割ったら、body の大きさを待たずに最小構成でも即座に生産する。
 /// 「大きい creep を待つ」判断は、艦隊に余裕があるときだけ許される。
@@ -254,7 +251,7 @@ pub fn do_spawn() {
             let mem_obj = js_sys::Object::new();
             let _ = js_sys::Reflect::set(
                 &mem_obj,
-                &wasm_bindgen::JsValue::from_str("role"),
+                &wasm_bindgen::JsValue::from_str(crate::mem::keys::ROLE),
                 &wasm_bindgen::JsValue::from_str(role),
             );
             let opts = SpawnOptions::new().memory(mem_obj.into());
@@ -274,6 +271,67 @@ pub fn do_spawn() {
             }
             Ok(()) => {
                 info!("spawn {} as {:?}", role, body);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cost_of(body: &[Part]) -> u32 {
+        body.iter().map(|p| p.cost()).sum()
+    }
+
+    #[test]
+    fn minerはworkを5個で頭打ちにする() {
+        // 予算が潤沢でも WORK は source 再生速度と釣り合う5個まで。
+        let body = build_body(crate::creeps::ROLE_MINER, 10_000);
+        let works = body.iter().filter(|p| **p == Part::Work).count();
+        assert_eq!(works, 5);
+        assert_eq!(body.iter().filter(|p| **p == Part::Move).count(), 1);
+        assert_eq!(body.iter().filter(|p| **p == Part::Carry).count(), 1);
+    }
+
+    #[test]
+    fn minerはworkが積めない予算では成立しない() {
+        // MOVE+CARRY = 100。WORK (100) に届かない予算では空を返す。
+        assert!(build_body(crate::creeps::ROLE_MINER, 150).is_empty());
+    }
+
+    #[test]
+    fn haulerはcarryとmoveだけで構成される() {
+        let body = build_body(crate::creeps::ROLE_HAULER, 550);
+        assert!(!body.is_empty());
+        assert!(body.iter().all(|p| *p == Part::Carry || *p == Part::Move));
+        // 1:1 比率。
+        let carries = body.iter().filter(|p| **p == Part::Carry).count();
+        let moves = body.iter().filter(|p| **p == Part::Move).count();
+        assert_eq!(carries, moves);
+    }
+
+    #[test]
+    fn defenderはmoveが前に並ぶ() {
+        // 被弾は body の先頭から。MOVE を先に失っても反撃は続けられる。
+        let body = build_body(crate::creeps::ROLE_DEFENDER, 520);
+        assert!(!body.is_empty());
+        let first_attack = body.iter().position(|p| *p == Part::Attack).unwrap();
+        assert!(body[..first_attack].iter().all(|p| *p == Part::Move));
+    }
+
+    #[test]
+    fn どのbodyも予算とサイズ上限を守る() {
+        for role in [
+            crate::creeps::ROLE_MINER,
+            crate::creeps::ROLE_HAULER,
+            crate::creeps::ROLE_DEFENDER,
+            crate::creeps::ROLE_WORKER,
+        ] {
+            for budget in [0, 100, 300, 1000, 12_900] {
+                let body = build_body(role, budget);
+                assert!(cost_of(&body) <= budget, "{} over budget {}", role, budget);
+                assert!(body.len() <= screeps::constants::MAX_CREEP_SIZE as usize);
             }
         }
     }

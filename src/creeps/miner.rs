@@ -32,7 +32,7 @@ pub fn run_miner(creep: &Creep) {
         return;
     }
 
-    let assigned = cmem.string("mine_at").ok().flatten();
+    let assigned = cmem.string(crate::mem::keys::MINE_AT).ok().flatten();
 
     let source = match assigned.as_deref().and_then(|id| {
         sources
@@ -50,7 +50,7 @@ pub fn run_miner(creep: &Creep) {
                 .filter(|c| {
                     c.ticks_to_live().unwrap_or(u32::MAX) >= super::MINER_PRESPAWN_LEAD
                 })
-                .filter_map(|c| c.memory().string("mine_at").ok().flatten())
+                .filter_map(|c| c.memory().string(crate::mem::keys::MINE_AT).ok().flatten())
                 .collect();
 
             let Some(free) = sources
@@ -61,7 +61,7 @@ pub fn run_miner(creep: &Creep) {
                 return;
             };
 
-            cmem.set("mine_at", free.id().to_string());
+            cmem.set(crate::mem::keys::MINE_AT, free.id().to_string());
             info!("{} assigned to source {}", name, free.id());
             free.clone()
         }
