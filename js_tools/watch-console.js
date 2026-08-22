@@ -40,7 +40,26 @@ const argv = require('yargs')
 const out_path = argv.out || path.join('logs', `${argv.server}.log`);
 
 fs.mkdirSync(path.dirname(out_path), { recursive: true });
-const log_stream = fs.createWriteStream(out_path, { flags: 'a' });
+
+// ログのサイズ上限。超えたら .log.1 へ退避して書き直す (2世代保持)。
+// _startup のスーパーバイザーログと同じポリシー。常駐化に伴い、
+// 放っておくと際限なく育つようになったため。
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+let log_bytes = fs.existsSync(out_path) ? fs.statSync(out_path).size : 0;
+
+function write_line(entry) {
+  if (log_bytes + Buffer.byteLength(entry) > MAX_LOG_BYTES) {
+    try {
+      fs.renameSync(out_path, `${out_path}.1`);
+      log_bytes = 0;
+    } catch (err) {
+      // ローテート失敗 (他プロセスが掴んでいる等) なら諦めて追記を続ける。
+      // 次の書き込みで再挑戦する。
+    }
+  }
+  fs.appendFileSync(out_path, entry);
+  log_bytes += Buffer.byteLength(entry);
+}
 
 // Screeps サーバーはコンソール出力を HTML エスケープして送ってくる
 // (例: `role:"harvester"` が `role:&#x22;harvester&#x22;` になる)。
@@ -65,7 +84,7 @@ function record(kind, shard, message) {
   for (const line of decode_entities(String(message)).split('\n')) {
     if (line.length === 0) continue;
     const entry = `${stamp} ${shard_tag} ${kind} ${line}\n`;
-    log_stream.write(entry);
+    write_line(entry);
     process.stdout.write(entry);
   }
 }
@@ -114,7 +133,7 @@ async function main() {
   const shutdown = () => {
     record('SYS', null, 'shutting down');
     socket.disconnect();
-    log_stream.end(() => process.exit(0));
+    process.exit(0);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
