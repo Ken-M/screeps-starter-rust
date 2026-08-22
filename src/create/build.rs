@@ -159,10 +159,160 @@ fn plan_room(room: &Room) {
         }
     }
 
-    // --- 4. 幹線道路 ---
+    // --- 4. 侵入経路の防衛 rampart ---
+    // 出口から拠点への経路上の隘路を rampart で塞ぎ、その内側に射撃陣地を張る。
+    if budget > 0 && allowed(StructureType::Rampart, rcl) > 0 {
+        plan_defense_ramparts(room, spawn_pos, &structures, &sites, &mut budget, &mut placed_now);
+    }
+
+    // --- 5. 幹線道路 ---
     // spawn から各 source と controller へ。creep の往復が最も多い経路。
     if budget > 0 {
         plan_roads(room, spawn_pos, &blocked, &mut budget, &mut placed_now);
+    }
+}
+
+/// 隘路とみなす 3x3 内の歩けるマス数の上限 (中心含む)。
+/// 幅1の通路で3、幅2の通路で6程度。これ以下なら「少ない rampart で
+/// 塞げて守りやすい場所」と判断する。E23N15 の実測では、拠点への全侵入
+/// 経路が幅2の南東通路 (open=6) に収束しており、6 でちょうど拾える。
+const CHOKE_MAX_OPEN_TILES: usize = 6;
+
+/// 隘路の栓から拠点側に何マス下げて射撃陣地を置くか。
+/// 栓の外で止まる近接敵 (range 1) からは届かず、こちらの ranged / tower
+/// (range 3) は栓とその外側1マスまで撃てる距離。レンジ差で一方的に殴れる。
+const FIRING_POSITION_SETBACK: usize = 2;
+
+/// 侵入経路の防衛 rampart を計画する。
+///
+/// 考え方:
+/// - rampart は自軍 creep だけが通過でき、敵は破壊しないと通れない。
+///   したがって出口→拠点の経路上で最も狭い場所 (隘路) に張れば、
+///   最小の枚数と修理コストで侵入を堰き止められる。
+/// - 栓のすぐ内側に置く射撃陣地 rampart は、栓で足止めされた近接敵の
+///   range 1 の外、こちらの ranged の range 3 の内という位置。防御側だけ
+///   が攻撃できる非対称な間合いを地形として固定する。
+fn plan_defense_ramparts(
+    room: &Room,
+    spawn_pos: Position,
+    structures: &[StructureObject],
+    sites: &[screeps::objects::ConstructionSite],
+    budget: &mut usize,
+    placed_now: &mut HashSet<(u8, u8)>,
+) {
+    let terrain = room_terrain(room);
+    let walkable = |x: i8, y: i8| -> bool {
+        if !(0..50).contains(&x) || !(0..50).contains(&y) {
+            return false;
+        }
+        let xy = RoomXY::checked_new(x as u8, y as u8).expect("in range");
+        terrain.get_xy(xy) != screeps::Terrain::Wall
+    };
+    // 3x3 内の歩けるマス数。少ないほど狭い = 守りやすい。
+    let open_around = |x: u8, y: u8| -> usize {
+        let (cx, cy) = (x as i8, y as i8);
+        let mut n = 0;
+        for dx in -1..=1i8 {
+            for dy in -1..=1i8 {
+                if walkable(cx + dx, cy + dy) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+
+    // 出口を4辺に分類する。侵入経路は辺ごとに考える。
+    let mut sides: [Vec<Position>; 4] = Default::default();
+    for exit in room.find(find::EXIT, None).iter() {
+        let p = Position::from(exit);
+        let (x, y) = (p.x().u8(), p.y().u8());
+        let side = if y == 0 {
+            0
+        } else if x == 49 {
+            1
+        } else if y == 49 {
+            2
+        } else {
+            3
+        };
+        sides[side].push(p);
+    }
+
+    for exits in sides.iter() {
+        if *budget == 0 {
+            return;
+        }
+        let Some(&goal) = exits.get(exits.len() / 2) else {
+            continue;
+        };
+
+        // spawn からその辺の出口への最短経路 = 敵が使う侵入経路の逆順。
+        let opts = pathfinder::SearchOptions::new(|_: screeps::RoomName| {
+            pathfinder::MultiRoomCostResult::Default
+        })
+        .max_ops(2000)
+        .max_rooms(1);
+        let res = pathfinder::search(spawn_pos, goal, 0, Some(opts));
+        if res.incomplete() {
+            continue;
+        }
+        let path = res.path();
+
+        // 経路上で最も狭い場所を隘路に選ぶ。出口の縁は避ける
+        // (縁に置くと部屋の外から攻撃され、修理も出口を塞いで難しい)。
+        let mut choke: Option<(usize, usize)> = None; // (path index, open tiles)
+        for (i, step) in path.iter().enumerate() {
+            let (x, y) = (step.x().u8(), step.y().u8());
+            if x < EDGE_MARGIN || y < EDGE_MARGIN || x >= 50 - EDGE_MARGIN || y >= 50 - EDGE_MARGIN
+            {
+                continue;
+            }
+            let open = open_around(x, y);
+            if choke.is_none_or(|(_, best)| open < best) {
+                choke = Some((i, open));
+            }
+        }
+        let Some((choke_idx, open)) = choke else {
+            continue;
+        };
+        if open > CHOKE_MAX_OPEN_TILES {
+            // この辺の経路に狭い場所が無い。開けた場所に張っても回り込まれる
+            // だけなので、無理に置かない。
+            continue;
+        }
+
+        // 栓: 隘路の 3x3 のうち歩けるマス全部に rampart。
+        // 自軍は素通りできるので通行の副作用は無い。
+        let choke_pos = path[choke_idx];
+        let (cx, cy) = (choke_pos.x().u8() as i8, choke_pos.y().u8() as i8);
+        let mut targets: Vec<(u8, u8)> = Vec::new();
+        for dx in -1..=1i8 {
+            for dy in -1..=1i8 {
+                if walkable(cx + dx, cy + dy) {
+                    targets.push(((cx + dx) as u8, (cy + dy) as u8));
+                }
+            }
+        }
+        // 射撃陣地: 栓から拠点側へ下がった経路上のマス。
+        if choke_idx >= FIRING_POSITION_SETBACK {
+            let p = path[choke_idx - FIRING_POSITION_SETBACK];
+            targets.push((p.x().u8(), p.y().u8()));
+        }
+
+        for (x, y) in targets {
+            if *budget == 0 {
+                return;
+            }
+            if placed_now.contains(&(x, y)) || has_rampart_at(x, y, structures, sites) {
+                continue;
+            }
+            let xy = RoomXY::checked_new(x, y).expect("in range");
+            if try_place(room, xy, StructureType::Rampart) {
+                placed_now.insert((x, y));
+                *budget -= 1;
+            }
+        }
     }
 }
 
