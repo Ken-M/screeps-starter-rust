@@ -167,7 +167,7 @@ pub fn run_harvester(creep: &Creep) {
     }
 
     // 配達先が無いときは余剰労働力として働く。
-    worker::run_worker(creep);
+    worker::run_worker(creep, false);
 }
 
 pub fn run_harvester_spawn(creep: &Creep) {

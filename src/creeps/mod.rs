@@ -711,6 +711,11 @@ pub fn creep_loop() {
         }
     }
 
+    // この tick でまだ「固定アップグレード係」を出していないか。
+    // worker のうち最初の1体だけを常時アップグレードに充て、建設が続いても
+    // controller の進捗が完全に止まらないようにする。
+    let mut upgrade_slot_taken = false;
+
     for info in roster.iter() {
         let creep = &info.creep;
         let name = info.name.clone();
@@ -1291,12 +1296,16 @@ pub fn creep_loop() {
                 }
 
                 "worker" => {
-                    worker::run_worker(&creep);
+                    let force_upgrade = !upgrade_slot_taken;
+                    upgrade_slot_taken = true;
+                    worker::run_worker(creep, force_upgrade);
                 }
 
                 // 旧ロール名。生きている creep が持っている間は worker として扱う。
                 "builder" | "upgrader" | "repairer" => {
-                    worker::run_worker(&creep);
+                    let force_upgrade = !upgrade_slot_taken;
+                    upgrade_slot_taken = true;
+                    worker::run_worker(creep, force_upgrade);
                 }
 
                 "attacker" => {}
