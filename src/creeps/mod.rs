@@ -7,7 +7,7 @@ use crate::constants::*;
 use crate::mem::{self, MemoryExt};
 use crate::util::*;
 use log::*;
-use screeps::action_error_codes::{HarvestErrorCode, CreepMoveToErrorCode};
+use screeps::action_error_codes::{CreepMoveByPathErrorCode, HarvestErrorCode};
 use screeps::enums::StructureObject;
 use screeps::local::Position;
 use screeps::pathfinder::SearchResults;
@@ -821,7 +821,10 @@ pub fn creep_loop() {
 
                     if let Err(e) = res {
                         info!("couldn't move to source: {:?}", e);
-                        if e == CreepMoveToErrorCode::NoPath {
+                        // move_by_path は経路が使えない (creep が経路上にいない等) とき
+                        // NotFound を返す。旧 move_to の NoPath に相当するので、
+                        // 同じくターゲットを捨てて次tickに選び直す。
+                        if e == CreepMoveByPathErrorCode::NotFound {
                             creep.memory().del("target_pos");
                         }
                     }

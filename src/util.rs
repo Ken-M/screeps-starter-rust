@@ -39,24 +39,29 @@ lazy_static! {
 }
 
 /// 0.23 で消えた `creep.move_by_path_search_result()` の代替。
-/// path 上の現在位置から次の一歩へ move する。
+///
+/// 当初は経路の1歩目に対して `creep.move_to()` を呼んでいたが、`move_to` は内部で
+/// 独自に経路探索をやり直すため、`search_many` で高価に求めた経路を捨てて
+/// もう一度探索していた (1 creep 1 tick あたり探索2回)。
+///
+/// `SearchResults::opaque_path()` は JS 配列をそのまま返すので、Rust 側の
+/// `Vec<Position>` 変換も挟まずに `move_by_path` へ渡せる。探索は1回で済む。
 pub fn move_by_search_result(
     creep: &screeps::objects::Creep,
     res: &SearchResults,
-) -> Result<(), screeps::action_error_codes::CreepMoveToErrorCode> {
-    let path = res.path();
-    let pos = creep.pos();
+) -> Result<(), screeps::action_error_codes::CreepMoveByPathErrorCode> {
+    creep.move_by_path(res.opaque_path().as_ref())
+}
 
-    let next = match path.iter().position(|p| *p == pos) {
-        Some(i) if i + 1 < path.len() => path[i + 1],
-        Some(_) => return Ok(()), // 既に終点にいる.
-        None => match path.first() {
-            Some(p) => *p,
-            None => return Err(screeps::action_error_codes::CreepMoveToErrorCode::NoPath),
-        },
-    };
-
-    creep.move_to(next)
+/// 探索対象が1つも無いときに返す「空の探索結果」。
+///
+/// ゴールが空のまま `search_many` を呼ぶと、PathFinder は目標を見つけられないまま
+/// 既定の 2000 ops を必ず使い切る。creep 数 × 探索回数だけこれが起きるため、
+/// 何もしないのに数万 ops を溶かしていた。
+/// 自分の現在地を範囲0のゴールにすると即座に (ops ほぼ0で) 空経路が返る。
+/// 呼び出し側は一律 `path().len() > 0` で判定しているので挙動も変わらない。
+fn empty_search(creep: &screeps::objects::Creep) -> SearchResults {
+    search(creep.pos(), creep.pos(), 0, Some(default_search_options()))
 }
 
 fn xy(x: u8, y: u8) -> RoomXY {
@@ -111,6 +116,15 @@ fn default_search_options() -> SearchOptions<fn(RoomName) -> MultiRoomCostResult
     SearchOptions::new(calc_room_cost as fn(RoomName) -> MultiRoomCostResult)
         .plain_cost(2)
         .swamp_cost(10)
+        // 既定は 2000。到達不能なゴールを狙うと毎回これを使い切るので絞る。
+        // 1部屋内の移動なら 500 で十分足りる。
+        .max_ops(500)
+        // 既定は 16 部屋。この AI は隣接部屋までしか扱わない。
+        .max_rooms(2)
+        // plain_cost を 2 にしているのに既定の 1.2 のままだと、ヒューリスティックが
+        // 実コストの半分程度に過小評価され、A* がほぼ Dijkstra 化して ops を浪費する。
+        // 平地コストに合わせる。
+        .heuristic_weight(2.0)
 }
 
 fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
@@ -1115,6 +1129,10 @@ pub fn find_nearest_transfarable_item(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1154,6 +1172,10 @@ pub fn find_nearest_transfarable_terminal(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1177,6 +1199,10 @@ pub fn find_nearest_repairable_item_hp(
                 find_item_list.push((chk_item.clone(), 3));
             }
         }
+    }
+
+    if find_item_list.is_empty() {
+        return empty_search(creep);
     }
 
     let option = default_search_options();
@@ -1204,6 +1230,10 @@ pub fn find_nearest_repairable_item_except_wall_dying(
                 }
             }
         }
+    }
+
+    if find_item_list.is_empty() {
+        return empty_search(creep);
     }
 
     let option = default_search_options();
@@ -1234,6 +1264,10 @@ pub fn find_nearest_transferable_structure(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options().max_cost(max_cost.unwrap_or(f64::INFINITY));
 
     return search_many(
@@ -1255,6 +1289,10 @@ pub fn find_nearest_construction_site(
         if (chk_item.progress_total() - chk_item.progress()) <= threshold {
             find_item_list.push((chk_item.clone(), 3));
         }
+    }
+
+    if find_item_list.is_empty() {
+        return empty_search(creep);
     }
 
     let option = default_search_options();
@@ -1352,6 +1390,10 @@ pub fn find_nearest_active_source(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1445,6 +1487,10 @@ pub fn find_nearest_stored_source(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1497,6 +1543,10 @@ pub fn find_nearest_exhausted_source(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1526,6 +1576,10 @@ pub fn find_nearest_dropped_resource(
         }
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1542,6 +1596,10 @@ pub fn find_flee_path_from_active_source(creep: &screeps::objects::Creep) -> Sea
 
     for chk_item in item_list.iter() {
         find_item_list.push((chk_item.clone(), 3));
+    }
+
+    if find_item_list.is_empty() {
+        return empty_search(creep);
     }
 
     let option = default_search_options().flee(true);
@@ -1567,6 +1625,10 @@ pub fn find_nearest_enemy(creep: &screeps::objects::Creep, range: u32) -> Search
         find_item_list.push((chk_item.clone(), range));
     }
 
+    if find_item_list.is_empty() {
+        return empty_search(creep);
+    }
+
     let option = default_search_options();
 
     return search_many(
@@ -1587,6 +1649,10 @@ pub fn find_nearest_room_controler(creep: &screeps::objects::Creep) -> SearchRes
                 find_item_list.push((chk_item.clone(), 3));
             }
         }
+    }
+
+    if find_item_list.is_empty() {
+        return empty_search(creep);
     }
 
     let option = default_search_options();
