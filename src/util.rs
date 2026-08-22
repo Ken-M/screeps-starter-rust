@@ -37,6 +37,24 @@ thread_local! {
     static TARGET_CLAIMS: RefCell<HashMap<Position, u32>> = RefCell::new(HashMap::new());
 }
 
+thread_local! {
+    /// この探索では味方 creep を通行不可として扱うか。
+    ///
+    /// 通常は味方を「待てば退く」前提の低コスト (MY_CREEP_COST) で通すが、
+    /// その経路は実際には占有マスへ入れず移動が失敗する。1マス幅の袋小路では
+    /// 入る creep と出る creep が向かい合い、双方が毎tick同じ経路を計算して
+    /// 同じ失敗を繰り返す千日手になる。
+    /// 数tick動けなかった creep の探索ではこれを立て、味方を壁として扱わせる。
+    /// 迂回路があればそちらへ、無ければ探索が incomplete になりその場で待つ
+    /// (少なくとも押し合いはしない。塞いでいる creep は積載が満ちれば退く)。
+    static HARD_BLOCK_MY_CREEPS: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// スタックした creep の探索モードを設定する。creep の処理の前後で必ず対にして呼ぶ。
+pub fn set_hard_block_my_creeps(on: bool) {
+    HARD_BLOCK_MY_CREEPS.with(|f| f.set(on));
+}
+
 /// 味方 creep のマスに乗せるコスト。
 ///
 /// 旧実装は敵味方を問わず creep のいるマスを 0xff (通行不可) にしていた。
@@ -737,9 +755,15 @@ fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut Loca
     for creep in room_obj.find(find::CREEPS, None) {
         if creep.my() {
             let xy = creep.pos().xy();
-            let cur = cost_matrix.get(xy);
-            if cur < 0xff {
-                cost_matrix.set(xy, cur.max(MY_CREEP_COST));
+            if HARD_BLOCK_MY_CREEPS.with(|f| f.get()) {
+                // スタック中の creep の探索。味方を壁として扱い、実際に通れる
+                // 迂回路だけを返させる。
+                cost_matrix.set(xy, 0xff);
+            } else {
+                let cur = cost_matrix.get(xy);
+                if cur < 0xff {
+                    cost_matrix.set(xy, cur.max(MY_CREEP_COST));
+                }
             }
             continue;
         }

@@ -28,6 +28,10 @@ enum AttackerKind {
 /// 採取先が1つも見つからなかったとき、次に再探索するまで待つ tick 数。
 const HARVEST_RETRY_BACKOFF: u32 = 10;
 
+/// この tick 数連続で動けなかったらスタックとみなす。
+/// 1 tick は正常な待ち (fatigue や順番待ち) でも起きるので 2 から。
+const STUCK_THRESHOLD: i32 = 2;
+
 pub const ROLE_MINER: &str = "miner";
 pub const ROLE_HAULER: &str = "hauler";
 pub const ROLE_HARVESTER: &str = "harvester";
@@ -521,6 +525,8 @@ struct CreepInfo {
     attacker_kind: AttackerKind,
     work: u32,
     carry: u32,
+    /// 連続で同じマスに留まっている tick 数。
+    stuck_ticks: i32,
 }
 
 impl CreepInfo {
@@ -603,6 +609,21 @@ pub fn creep_loop() {
             }
         }
 
+        // スタック検知。前 tick と同じマスに居続けたらカウントを増やす。
+        // 意図して動かない creep (miner の定位置、upgrader の作業中など) も
+        // カウントは増えるが、使う側で「移動しようとしている creep」に限る。
+        let pos = creep.pos();
+        let packed = pos.packed_repr() as i32;
+        let prev_packed = cmem.i32("last_pos").unwrap_or(None).unwrap_or(-1);
+        let stuck_ticks = if prev_packed == packed {
+            let n = cmem.i32("stuck_ticks").unwrap_or(None).unwrap_or(0) + 1;
+            n
+        } else {
+            0
+        };
+        cmem.set("last_pos", packed);
+        cmem.set("stuck_ticks", stuck_ticks);
+
         roster.push(CreepInfo {
             creep,
             name,
@@ -610,6 +631,7 @@ pub fn creep_loop() {
             attacker_kind,
             work,
             carry,
+            stuck_ticks,
         });
     }
 
@@ -689,6 +711,11 @@ pub fn creep_loop() {
         let creep = &info.creep;
         let name = info.name.clone();
         debug!("running creep {}, cpu:{}", name, game::cpu::get_used());
+
+        // スタック用の探索モードは creep ごとに決める。前の creep の状態を
+        // 引き継がないよう、冒頭で必ず解除する (途中の continue で末尾の解除が
+        // 飛ばされてもリークしない)。
+        set_hard_block_my_creeps(false);
 
         // memory は JS の getter なので 1 回だけ取って使い回す。
         let cmem = creep.memory();
@@ -797,6 +824,27 @@ pub fn creep_loop() {
                 cmem.del("harvested_from_link");
                 cmem.del("nothing_to_harvest");
             }
+        }
+
+        // スタック処理。採取のため移動中 (harvesting でターゲット持ち) に
+        // 数tick動けていないなら、味方を壁扱いする探索に切り替えた上で
+        // ターゲットを選び直す。押し合いの千日手をここで断ち切る。
+        // miner は定位置で意図的に動かないので対象外。
+        let is_stuck = info.stuck_ticks >= STUCK_THRESHOLD
+            && role_string != ROLE_MINER
+            && cmem.bool("harvesting")
+            && cmem.string("target_pos").ok().flatten().is_some();
+
+        if is_stuck {
+            debug!("{} is stuck for {} ticks; re-targeting", name, info.stuck_ticks);
+            if let Ok(Some(json)) = cmem.string("target_pos") {
+                if let Ok(prev) = serde_json::from_str::<Position>(&json) {
+                    release_target(prev);
+                }
+            }
+            cmem.del("target_pos");
+            cmem.del("target_pos_count");
+            set_hard_block_my_creeps(true);
         }
 
         // 採取先が無いと分かった直後は、再探索を数tick止める。
@@ -1255,7 +1303,11 @@ pub fn creep_loop() {
                 }
             }
         }
+
     }
+
+    // ループを抜けた後にフラグが残らないようにする。
+    set_hard_block_my_creeps(false);
 
     // check number of each type creeps.
     let root = mem::root();
