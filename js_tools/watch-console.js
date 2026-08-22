@@ -42,9 +42,10 @@ const out_path = argv.out || path.join('logs', `${argv.server}.log`);
 fs.mkdirSync(path.dirname(out_path), { recursive: true });
 
 // ログのサイズ上限。超えたら .log.1 へ退避して書き直す (2世代保持)。
-// _startup のスーパーバイザーログと同じポリシー。常駐化に伴い、
-// 放っておくと際限なく育つようになったため。
-const MAX_LOG_BYTES = 5 * 1024 * 1024;
+// 約7日分を保持する。実測レートは約 50-60MB/日 (2026-08-23、creep 17体
+// 規模。人口が増えれば伸びるのであくまで目安)。.1 世代と合わせて
+// 最大 800MB 程度をディスクに使う。
+const MAX_LOG_BYTES = 400 * 1024 * 1024;
 let log_bytes = fs.existsSync(out_path) ? fs.statSync(out_path).size : 0;
 
 function write_line(entry) {
