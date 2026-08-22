@@ -67,6 +67,7 @@ npm run deploy -- --server mmo
 - 出力: `logs/mmo.log` (ゲームコンソール)、`logs/watcher-daemon.log` (デーモンの死活)。
   どちらも上限超過で `.1` へローテートする2世代保持。
 - 操作: `Start-ScheduledTask` / `Stop-ScheduledTask -TaskName screeps-watch-console`
+- 初回セットアップ (別マシン移行時など): `pwsh -File tools\install-watch-console-task.ps1`
 
 ## Migration to 0.22
 
