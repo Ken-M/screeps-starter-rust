@@ -42,6 +42,9 @@ pub fn game_loop() {
     info!("running spawns cpu:{}", screeps::game::cpu::get_used());
     create::spawn::do_spawn();
 
+    info!("running build planner cpu:{}", screeps::game::cpu::get_used());
+    create::build::run_planner();
+
     info!("running creeps cpu:{}", screeps::game::cpu::get_used());
     creeps::creep_loop();
 

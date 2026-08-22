@@ -968,7 +968,7 @@ fn live_tickcount_from_kind(
 /// 1500 構造物なら 1500 回の JS 呼び出し + オブジェクト生成になる。
 /// `LocalRoomTerrain` は 2500 バイトを wasm 線形メモリへ写すので、部屋あたり
 /// 1 回変換すれば以降の参照は JS 呼び出しゼロで済む。
-fn room_terrain(room: &screeps::objects::Room) -> Rc<LocalRoomTerrain> {
+pub fn room_terrain(room: &screeps::objects::Room) -> Rc<LocalRoomTerrain> {
     let name = room.name();
 
     TERRAIN_CACHE.with(|cache| {
