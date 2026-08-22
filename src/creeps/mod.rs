@@ -13,6 +13,7 @@ use screeps::local::Position;
 use screeps::pathfinder::SearchResults;
 use screeps::prelude::*;
 use screeps::{find, game, look, Creep, Part};
+use std::collections::HashMap;
 
 #[derive(PartialEq, Debug)]
 enum AttackerKind {
@@ -24,6 +25,105 @@ enum AttackerKind {
 /// 採取先が1つも見つからなかったとき、次に再探索するまで待つ tick 数。
 const HARVEST_RETRY_BACKOFF: u32 = 10;
 
+const ROLE_HARVESTER: &str = "harvester";
+const ROLE_HARVESTER_SPAWN: &str = "harvester_spawn";
+const ROLE_HARVESTER_MINERAL: &str = "harvester_mineral";
+const ROLE_CARRIER_MINERAL: &str = "carrier_mineral";
+const ROLE_BUILDER: &str = "builder";
+const ROLE_UPGRADER: &str = "upgrader";
+const ROLE_REPAIRER: &str = "repairer";
+
+/// 1 tick に配置転換してよい creep の数。
+/// 一度に動かすとハンチングするので少しずつ寄せる。
+const ROLE_REBALANCE_PER_TICK: i32 = 1;
+
+/// 目標のロール構成。優先度の高い順に並べる。
+///
+/// 旧実装は if-else の連鎖で、基準が「固定値3」「総数比」「絶対値1000」「総数13超」と
+/// バラバラだった。さらにカウンタが加算のみで既存 creep を見直さないため、分布が
+/// 「どの順序で creep が死んで生まれたか」に依存する経路依存の値になり、目標比率に
+/// 収束しなかった。建設ラッシュ中に育ったコロニーは建設が終わっても永久に builder 過多。
+///
+/// 目標を1箇所の関数として定義し、毎tick「目標 − 現状」の差分で配分する。
+fn role_targets(total: i32, has_terminal: bool) -> Vec<(&'static str, i32)> {
+    let t = total.max(1);
+
+    vec![
+        // spawn/extension への補給は最優先。ここが切れると何も回らない。
+        (ROLE_HARVESTER_SPAWN, std::cmp::min(3, t)),
+        // 採取本体。全体の3割を目安に、最低2体は確保する。
+        (ROLE_HARVESTER, std::cmp::max(2, t * 3 / 10)),
+        (ROLE_UPGRADER, t / 10 + 1),
+        (ROLE_BUILDER, t / 6),
+        (ROLE_REPAIRER, t / 6),
+        // 鉱物系は艦隊に余裕が出てから。
+        (ROLE_HARVESTER_MINERAL, if t > 10 { 1 } else { 0 }),
+        (
+            ROLE_CARRIER_MINERAL,
+            if has_terminal && t > 10 { 1 } else { 0 },
+        ),
+    ]
+}
+
+/// この creep がそのロールをこなせる body を持っているか。
+///
+/// 旧実装は body を一切見ずに列挙順の先頭3体を無条件で harvester_spawn にしていた。
+/// WORK 1個・ATTACK 10個の creep が採取係になり得る。
+fn can_fill_role(creep: &Creep, role: &str) -> bool {
+    let mut work = 0;
+    let mut carry = 0;
+    for part in creep.body().iter() {
+        if part.hits() == 0 {
+            continue;
+        }
+        match part.part() {
+            Part::Work => work += 1,
+            Part::Carry => carry += 1,
+            _ => {}
+        }
+    }
+
+    match role {
+        // 運搬だけなので CARRY があればよい。
+        ROLE_CARRIER_MINERAL => carry > 0,
+        // 採取・建設・修理・アップグレードには WORK と CARRY の両方が要る。
+        _ => work > 0 && carry > 0,
+    }
+}
+
+/// 不足が最も大きく、かつこの creep がこなせるロールを選ぶ。
+fn pick_role(creep: &Creep, targets: &[(&'static str, i32)], counts: &HashMap<String, i32>) -> String {
+    let mut best: Option<(&'static str, i32)> = None;
+
+    for (role, target) in targets.iter() {
+        if !can_fill_role(creep, role) {
+            continue;
+        }
+        let current = counts.get(*role).copied().unwrap_or(0);
+        let deficit = target - current;
+        if deficit <= 0 {
+            continue;
+        }
+        // 同点なら targets の並び順 (優先度) が勝つ。
+        if best.map_or(true, |(_, b)| deficit > b) {
+            best = Some((role, deficit));
+        }
+    }
+
+    // どこも埋まっているなら採取に回す。
+    // 旧実装は catch-all が repairer で、緊急時に全員が repairer 化していた。
+    match best {
+        Some((role, _)) => role.to_string(),
+        None => {
+            if can_fill_role(creep, ROLE_HARVESTER) {
+                ROLE_HARVESTER.to_string()
+            } else {
+                ROLE_CARRIER_MINERAL.to_string()
+            }
+        }
+    }
+}
+
 /// ターゲットの有効期限を経路長から決める。
 ///
 /// 旧実装は 5〜20 の固定値だった。カウントダウンは移動中に毎tick減るが、
@@ -31,8 +131,8 @@ const HARVEST_RETRY_BACKOFF: u32 = 10;
 /// 5マス進むごとにフル再探索を払う計算になり、部屋の対角 (最大約70マス) には
 /// いつまでも到達できなかった。
 /// 経路長 × 2 に余裕を足した値にする。
-fn path_ttl(res: &SearchResults) -> i32 {
-    let steps = res.path().len() as i32;
+fn path_ttl_from(path: &[Position]) -> i32 {
+    let steps = path.len() as i32;
     (steps * 2 + 5).clamp(5, 200)
 }
 
@@ -51,11 +151,12 @@ fn reset_source_target(
             res.path()
         );
 
-        if res.path().len() > 0 && res.incomplete() == false {
-            let last_pos = *(res.path().last().unwrap());
+        let path = res.path();
+        if path.len() > 0 && res.incomplete() == false {
+            let last_pos = *(path.last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", path_ttl(&res));
+            creep.memory().set("target_pos_count", path_ttl_from(&path));
             creep.memory().set("will_harvest_from_storage", false);
             creep.memory().del("nothing_to_harvest");
 
@@ -71,11 +172,12 @@ fn reset_source_target(
         if *harvest_kind == ResourceKind::ENERGY {
             let res = find_nearest_stored_source(&creep, harvest_kind, true);
 
-            if res.path().len() > 0 && res.incomplete() == false {
-                let last_pos = *(res.path().last().unwrap());
+            let path = res.path();
+            if path.len() > 0 && res.incomplete() == false {
+                let last_pos = *(path.last().unwrap());
                 let json_str = serde_json::to_string(&last_pos).unwrap();
                 creep.memory().set("target_pos", json_str);
-                creep.memory().set("target_pos_count", path_ttl(&res));
+                creep.memory().set("target_pos_count", path_ttl_from(&path));
                 creep.memory().set("will_harvest_from_storage", true);
                 creep.memory().del("nothing_to_harvest");
 
@@ -91,11 +193,12 @@ fn reset_source_target(
         // storageをチェック.
         let res = find_nearest_stored_source(&creep, harvest_kind, false);
 
-        if res.path().len() > 0 && res.incomplete() == false {
-            let last_pos = *(res.path().last().unwrap());
+        let path = res.path();
+        if path.len() > 0 && res.incomplete() == false {
+            let last_pos = *(path.last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", path_ttl(&res));
+            creep.memory().set("target_pos_count", path_ttl_from(&path));
             creep.memory().set("will_harvest_from_storage", true);
             creep.memory().del("nothing_to_harvest");
 
@@ -114,11 +217,12 @@ fn reset_source_target(
             res.path()
         );
 
-        if res.path().len() > 0 && res.incomplete() == false {
-            let last_pos = *(res.path().last().unwrap());
+        let path = res.path();
+        if path.len() > 0 && res.incomplete() == false {
+            let last_pos = *(path.last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", path_ttl(&res));
+            creep.memory().set("target_pos_count", path_ttl_from(&path));
             creep.memory().set("will_harvest_from_storage", false);
             creep.memory().del("nothing_to_harvest");
 
@@ -134,11 +238,12 @@ fn reset_source_target(
     //　やむなく枯渇sourceを選ぶ.
     let res = find_nearest_exhausted_source(&creep, harvest_kind);
 
-    if res.path().len() > 0 {
-        let last_pos = *(res.path().last().unwrap());
+    let path = res.path();
+    if path.len() > 0 {
+        let last_pos = *(path.last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
-        creep.memory().set("target_pos_count", path_ttl(&res));
+        creep.memory().set("target_pos_count", path_ttl_from(&path));
         creep.memory().set("will_harvest_from_storage", true);
         creep.memory().del("nothing_to_harvest");
 
@@ -215,10 +320,10 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     };
 
     let res = find_nearest_enemy(&creep, range);
-    debug!("go to:{:?}", res.path());
+    let path = res.path();
 
-    if res.path().len() > 0 {
-        let last_pos = *(res.path().last().unwrap());
+    if path.len() > 0 {
+        let last_pos = *(path.last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
         // 採取用の target_pos とは別のキーに書く。
         creep.memory().set("attack_target_pos", json_str);
@@ -262,13 +367,9 @@ fn get_role_and_attacker_kind(creep: &Creep) -> (String, AttackerKind) {
 }
 
 pub fn creep_loop() {
-    let mut num_builder: i32 = 0;
-    let mut num_harvester: i32 = 0;
-    let mut num_upgrader: i32 = 0;
-    let mut num_harvester_spawn: i32 = 0;
-    let mut num_harvester_mineral: i32 = 0;
-    let mut num_carrier_mineral: i32 = 0;
-    let mut num_repairer: i32 = 0;
+    // ロール別の実数。旧実装は7個の個別変数だったが、目標との差分で配分するには
+    // 名前で引ける形の方が扱いやすい。
+    let mut role_counts: HashMap<String, i32> = HashMap::new();
 
     let mut opt_num_attackable_short: i32 = 0;
     let mut opt_num_attackable_long: i32 = 0;
@@ -303,43 +404,11 @@ pub fn creep_loop() {
             }
         }
 
-        match role_string.as_str() {
-            "harvester" => {
-                num_harvester += 1;
+        if role_string != "none" {
+            *role_counts.entry(role_string.clone()).or_insert(0) += 1;
+
+            if role_string == ROLE_HARVESTER || role_string == ROLE_HARVESTER_SPAWN {
                 cap_worker_carry += creep.store().get_capacity(None) as u128;
-            }
-
-            "harvester_spawn" => {
-                num_harvester_spawn += 1;
-                cap_worker_carry += creep.store().get_capacity(None) as u128;
-            }
-
-            "harvester_mineral" => {
-                num_harvester_mineral += 1;
-            }
-
-            "carrier_mineral" => {
-                num_carrier_mineral += 1;
-            }
-
-            "builder" => {
-                num_builder += 1;
-            }
-
-            "upgrader" => {
-                num_upgrader += 1;
-            }
-
-            "repairer" => {
-                num_repairer += 1;
-            }
-
-            "none" => {
-                // do nothing.
-            }
-
-            &_ => {
-                error!("no role info");
             }
         }
     }
@@ -353,27 +422,78 @@ pub fn creep_loop() {
     // repairer に落ちていた。採取係が枯渇した瞬間に全creepが最も重い委譲チェーンを
     // 走るという、最悪のタイミングで最悪の挙動になっていた。
     // ロールを消すならカウンタも同じ地点まで巻き戻す。
-    if (num_harvester + num_harvester_spawn <= 2)
-        && (total_creeps > (num_harvester + num_harvester_spawn) as usize)
-    {
+    let harvester_total = role_counts.get(ROLE_HARVESTER).copied().unwrap_or(0)
+        + role_counts.get(ROLE_HARVESTER_SPAWN).copied().unwrap_or(0);
+    if (harvester_total <= 2) && (total_creeps > harvester_total as usize) {
         warn!("harvesters depleted; resetting all roles");
         for creep in game::creeps().values() {
             creep.memory().del("role");
         }
 
-        num_builder = 0;
-        num_harvester = 0;
-        num_upgrader = 0;
-        num_harvester_spawn = 0;
-        num_harvester_mineral = 0;
-        num_carrier_mineral = 0;
-        num_repairer = 0;
+        role_counts.clear();
         cap_worker_carry = 0;
+    }
+
+    // 目標に寄せる再配分。
+    //
+    // 新規 creep への割り当てだけでは、いったんできた偏りが直らない。総数が減っても
+    // 過剰なロールはそのまま残るので、余っているロールから足りないロールへ
+    // 少しずつ移す。1 tick に動かすのは1体だけにしてハンチングを避ける。
+    {
+        let has_terminal = game::rooms().values().any(|r| r.terminal().is_some());
+        let targets = role_targets(total_creeps as i32, has_terminal);
+
+        let mut moved = 0;
+        for (role, target) in targets.iter() {
+            if moved >= ROLE_REBALANCE_PER_TICK {
+                break;
+            }
+            let current = role_counts.get(*role).copied().unwrap_or(0);
+            if current >= *target {
+                continue;
+            }
+
+            // 最も余っているロールを探す。
+            let surplus_role = targets
+                .iter()
+                .filter(|(r, t)| role_counts.get(*r).copied().unwrap_or(0) > *t)
+                .max_by_key(|(r, t)| role_counts.get(*r).copied().unwrap_or(0) - t)
+                .map(|(r, _)| *r);
+
+            let Some(surplus_role) = surplus_role else {
+                break;
+            };
+
+            // 余っているロールの creep を1体、こなせるなら移す。
+            let victim = game::creeps().values().find(|c| {
+                c.memory()
+                    .string("role")
+                    .ok()
+                    .flatten()
+                    .map_or(false, |r| r == surplus_role)
+                    && can_fill_role(c, role)
+            });
+
+            if let Some(victim) = victim {
+                info!("rebalance {}: {} -> {}", victim.name(), surplus_role, role);
+                victim.memory().set("role", *role);
+                // 配達途中の状態を持ち越さない。
+                victim.memory().del("target_pos");
+                victim.memory().del("target_pos_count");
+
+                *role_counts.entry(surplus_role.to_string()).or_insert(0) -= 1;
+                *role_counts.entry(role.to_string()).or_insert(0) += 1;
+                moved += 1;
+            }
+        }
     }
 
     for creep in game::creeps().values() {
         let name = creep.name();
         info!("running creep {}, cpu:{}", name, game::cpu::get_used());
+
+        // memory は JS の getter なので 1 回だけ取って使い回す。
+        let cmem = creep.memory();
 
         let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
         let mut harvest_kind: ResourceKind = ResourceKind::ENERGY;
@@ -383,67 +503,34 @@ pub fn creep_loop() {
         let mut role_string = role_and_attacker_kind.0;
         let attacker_kind = role_and_attacker_kind.1;
 
-        match role_string.as_str() {
-            "none" => {
-                if num_harvester_spawn < 3 {
-                    creep.memory().set("role", "harvester_spawn");
-                    num_harvester_spawn += 1;
-                    role_string = String::from("harvester_spawn");
-                    cap_worker_carry += creep.store().get_capacity(None) as u128;
-                } else if num_upgrader < (total_creeps as i32 / 10) + 1 {
-                    creep.memory().set("role", "upgrader");
-                    num_upgrader += 1;
-                    role_string = String::from("upgrader");
-                } else if num_builder < (total_creeps as i32 / 6) {
-                    creep.memory().set("role", "builder");
-                    num_builder += 1;
-                    role_string = String::from("builder");
-                } else if num_repairer < (total_creeps as i32 / 6) {
-                    creep.memory().set("role", "repairer");
-                    num_repairer += 1;
-                    role_string = String::from("repairer");
-                } else if (num_harvester_mineral <= 0) && (total_creeps as i32 > 13) {
-                    creep.memory().set("role", "harvester_mineral");
-                    num_harvester_mineral += 1;
-                    harvest_kind = ResourceKind::MINELALS;
-                    role_string = String::from("harvester_mineral");
-                    is_harvester = true;
-                } else if cap_worker_carry < 1000 {
-                    creep.memory().set("role", "harvester");
-                    num_harvester += 1;
-                    role_string = String::from("harvester");
-                    is_harvester = true;
-                    cap_worker_carry += creep.store().get_capacity(None) as u128;
-                } else if let Some(_my_terminal) = creep.room().expect("I can't see").terminal() {
-                    if num_carrier_mineral <= 0 {
-                        creep.memory().set("role", "carrier_mineral");
-                        num_carrier_mineral += 1;
-                        harvest_kind = ResourceKind::MINELALS;
-                        role_string = String::from("carrier_mineral");
-                        is_harvester = false;
-                    } else {
-                        creep.memory().set("role", "repairer");
-                        num_repairer += 1;
-                        role_string = String::from("repairer");
-                    }
-                } else {
-                    creep.memory().set("role", "repairer");
-                    num_repairer += 1;
-                    role_string = String::from("repairer");
-                }
-            }
+        if role_string == "none" {
+            let has_terminal = creep
+                .room()
+                .map(|r| r.terminal().is_some())
+                .unwrap_or(false);
+            let targets = role_targets(total_creeps as i32, has_terminal);
+            role_string = pick_role(&creep, &targets, &role_counts);
 
-            "harvester" => {
-                is_harvester = true;
-            }
+            cmem.set("role", role_string.as_str());
+            *role_counts.entry(role_string.clone()).or_insert(0) += 1;
 
-            "harvester_mineral" => {
-                is_harvester = true;
+            if role_string == ROLE_HARVESTER || role_string == ROLE_HARVESTER_SPAWN {
+                cap_worker_carry += creep.store().get_capacity(None) as u128;
             }
+        }
 
-            &_ => {
-                // do nothing.
-            }
+        // 採取ロールかどうか。
+        // BUG-5: 旧実装は harvester_spawn がこの match から漏れており、
+        // is_harvester == false のまま「storage優先 → active source 後回し」という
+        // harvester とは逆の探索順で動いていた。storage も container も無い
+        // RCL1〜2 では、最初の3体が全員この経路で空スキャンを毎回払っていた。
+        is_harvester = matches!(
+            role_string.as_str(),
+            ROLE_HARVESTER | ROLE_HARVESTER_SPAWN | ROLE_HARVESTER_MINERAL
+        );
+
+        if role_string == ROLE_HARVESTER_MINERAL {
+            harvest_kind = ResourceKind::MINELALS;
         }
 
         info!("role:{:?}:atk:{:?}", role_string, attacker_kind);
@@ -485,14 +572,14 @@ pub fn creep_loop() {
         let total_used = store.get_used_capacity(None);
         let free_capacity = store.get_free_capacity(None);
 
-        if creep.memory().bool("harvesting") {
+        if cmem.bool("harvesting") {
             if (free_capacity == 0)
-                || ((creep.memory().bool("nothing_to_harvest")) && (deliverable > 0))
+                || ((cmem.bool("nothing_to_harvest")) && (deliverable > 0))
             {
-                creep.memory().set("harvesting", false);
-                creep.memory().del("target_pos");
-                creep.memory().del("will_harvest_from_storage");
-                creep.memory().del("nothing_to_harvest");
+                cmem.set("harvesting", false);
+                cmem.del("target_pos");
+                cmem.del("will_harvest_from_storage");
+                cmem.del("nothing_to_harvest");
             }
         } else {
             if deliverable == 0 {
@@ -511,19 +598,19 @@ pub fn creep_loop() {
                     }
                 }
 
-                creep.memory().set("harvesting", true);
-                creep.memory().del("target_pos");
-                creep.memory().del("harvested_from_storage");
-                creep.memory().del("harvested_from_terminal");
-                creep.memory().del("harvested_from_link");
-                creep.memory().del("nothing_to_harvest");
+                cmem.set("harvesting", true);
+                cmem.del("target_pos");
+                cmem.del("harvested_from_storage");
+                cmem.del("harvested_from_terminal");
+                cmem.del("harvested_from_link");
+                cmem.del("nothing_to_harvest");
             }
         }
 
         // 採取先が無いと分かった直後は、再探索を数tick止める。
         // 探索はフルで走ると全室スキャン6回 + 経路探索3回に達するため、
         // 状況が変わらないうちに毎tick繰り返すのは純粋な浪費になる。
-        if creep.memory().bool("harvesting") && creep.memory().bool("nothing_to_harvest") {
+        if cmem.bool("harvesting") && cmem.bool("nothing_to_harvest") {
             let retry_at = creep
                 .memory()
                 .i32("harvest_retry_at")
@@ -533,13 +620,13 @@ pub fn creep_loop() {
                 debug!("{} waiting for harvest retry at {}", name, retry_at);
                 continue;
             }
-            creep.memory().del("harvest_retry_at");
+            cmem.del("harvest_retry_at");
         }
 
-        if creep.memory().bool("harvesting") {
+        if cmem.bool("harvesting") {
             debug!("harvesting {}", name);
 
-            let check_string = creep.memory().string("target_pos");
+            let check_string = cmem.string("target_pos");
             debug!("harvesting string{:?}", check_string);
 
             let mut defined_target_pos = creep.pos();
@@ -582,7 +669,7 @@ pub fn creep_loop() {
                                     for one_result in look_result {
                                         if one_result.name() != creep.name() {
                                             debug!("re-check source :{}", defined_target_pos);
-                                            creep.memory().del("target_pos");
+                                            cmem.del("target_pos");
 
                                             let reset_result = reset_source_target(
                                                 &creep,
@@ -744,7 +831,7 @@ pub fn creep_loop() {
             }
 
             //  storage.
-            if is_harvested == false && creep.memory().bool("will_harvest_from_storage") == true {
+            if is_harvested == false && cmem.bool("will_harvest_from_storage") == true {
                 let structures = &creep
                     .room()
                     .expect("room is not visible to you")
@@ -762,7 +849,7 @@ pub fn creep_loop() {
                                             warn!("couldn't withdraw from container: {:?}", r);
                                             break;
                                         }
-                                        creep.memory().set("harvested_from_storage", true);
+                                        cmem.set("harvested_from_storage", true);
                                         is_harvested = true;
                                         break;
                                     }
@@ -774,7 +861,7 @@ pub fn creep_loop() {
                                             warn!("couldn't withdraw from storage: {:?}", r);
                                             break;
                                         }
-                                        creep.memory().set("harvested_from_storage", true);
+                                        cmem.set("harvested_from_storage", true);
                                         is_harvested = true;
                                         break;
                                     }
@@ -806,7 +893,7 @@ pub fn creep_loop() {
                                                     );
                                                     break;
                                                 }
-                                                creep.memory().set("harvested_from_terminal", true);
+                                                cmem.set("harvested_from_terminal", true);
                                                 is_harvested = true;
                                                 break;
                                             }
@@ -818,7 +905,7 @@ pub fn creep_loop() {
                                             warn!("couldn't withdraw from link: {:?}", r);
                                             break;
                                         }
-                                        creep.memory().set("harvested_from_link", true);
+                                        cmem.set("harvested_from_link", true);
                                         is_harvested = true;
                                         break;
                                     }
@@ -831,7 +918,7 @@ pub fn creep_loop() {
                                                 warn!("couldn't withdraw from lab: {:?}", r);
                                                 break;
                                             }
-                                            creep.memory().set("harvested_from_storage", true);
+                                            cmem.set("harvested_from_storage", true);
                                             is_harvested = true;
                                             break;
                                         }
@@ -854,7 +941,7 @@ pub fn creep_loop() {
             if is_harvested == false {
                 if creep.pos() == defined_target_pos {
                     debug!("already arrived, but can't harvest!!!");
-                    creep.memory().del("target_pos");
+                    cmem.del("target_pos");
                 } else {
                     let res = move_by_search_result(&creep, &path_search_result);
 
@@ -864,7 +951,7 @@ pub fn creep_loop() {
                         // NotFound を返す。旧 move_to の NoPath に相当するので、
                         // 同じくターゲットを捨てて次tickに選び直す。
                         if e == CreepMoveByPathErrorCode::NotFound {
-                            creep.memory().del("target_pos");
+                            cmem.del("target_pos");
                         }
                     }
                 }
@@ -876,10 +963,10 @@ pub fn creep_loop() {
                     .unwrap_or(10);
                 target_pos_count -= 1;
                 if target_pos_count <= 0 {
-                    creep.memory().del("target_pos");
-                    creep.memory().del("target_pos_count");
+                    cmem.del("target_pos");
+                    cmem.del("target_pos_count");
                 } else {
-                    creep.memory().set("target_pos_count", target_pos_count);
+                    cmem.set("target_pos_count", target_pos_count);
                 }
             }
         } else {
@@ -915,7 +1002,7 @@ pub fn creep_loop() {
                         debug!("fleeing from source!!:{:?}", res);
 
                         if res.is_ok() {
-                            creep.memory().set("fleeing_count", 5);
+                            cmem.set("fleeing_count", 5);
                             is_finished = true;
                         }
 
@@ -923,7 +1010,7 @@ pub fn creep_loop() {
                     }
                 }
             } else {
-                creep.memory().set("fleeing_count", flee_count - 1);
+                cmem.set("fleeing_count", flee_count - 1);
             }
 
             if is_finished {
@@ -974,13 +1061,14 @@ pub fn creep_loop() {
 
     // check number of each type creeps.
     let root = mem::root();
-    root.set("num_upgrader", num_upgrader);
-    root.set("num_builder", num_builder);
-    root.set("num_harvester", num_harvester);
-    root.set("num_harvester_spawn", num_harvester_spawn);
-    root.set("num_harvester_mineral", num_harvester_mineral);
-    root.set("num_carrier_mineral", num_carrier_mineral);
-    root.set("num_repairer", num_repairer);
+    let n = |role: &str| role_counts.get(role).copied().unwrap_or(0);
+    root.set("num_upgrader", n(ROLE_UPGRADER));
+    root.set("num_builder", n(ROLE_BUILDER));
+    root.set("num_harvester", n(ROLE_HARVESTER));
+    root.set("num_harvester_spawn", n(ROLE_HARVESTER_SPAWN));
+    root.set("num_harvester_mineral", n(ROLE_HARVESTER_MINERAL));
+    root.set("num_carrier_mineral", n(ROLE_CARRIER_MINERAL));
+    root.set("num_repairer", n(ROLE_REPAIRER));
 
     root.set("opt_num_attackable_short", opt_num_attackable_short);
     root.set("opt_num_attackable_long", opt_num_attackable_long);

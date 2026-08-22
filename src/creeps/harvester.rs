@@ -394,7 +394,7 @@ pub fn run_harvester_mineral(creep: &Creep) {
     let _name = creep.name();
     info!("running harvester mineral {}", creep.name());
 
-    if creep.store().get_used_capacity(None) <= 0 {
+    if creep.store().get_used_capacity(None) == 0 {
         // nothing to do.
         return;
     }
@@ -511,7 +511,7 @@ pub fn run_carrier_mineral(creep: &Creep) {
     let _name = creep.name();
     info!("running carrier mineral {}", creep.name());
 
-    if creep.store().get_used_capacity(None) <= 0 {
+    if creep.store().get_used_capacity(None) == 0 {
         // nothing to do.
         return;
     }

@@ -31,6 +31,8 @@ thread_local! {
     /// tick 内で共有する部屋ごとの地形。詳細は `room_terrain()`。
     static TERRAIN_CACHE: RefCell<HashMap<RoomName, Rc<LocalRoomTerrain>>> =
         RefCell::new(HashMap::new());
+    /// tick 内で共有する仕事の有無。詳細は `work_summary()`。
+    static WORK_SUMMARY_CACHE: RefCell<Option<Rc<WorkSummary>>> = RefCell::new(None);
 }
 
 const ROOM_SIZE_X: u8 = 50;
@@ -170,6 +172,77 @@ fn all_structures() -> Rc<Vec<StructureObject>> {
     })
 }
 
+/// 可視範囲にどんな仕事が存在するかの要約。tick 単位でキャッシュする。
+///
+/// ロールの委譲チェーン (harvester -> builder -> repairer -> upgrader) は、
+/// 各段が「自分の仕事があるか」を確かめるために `find_nearest_*` を呼んでいた。
+/// これは PathFinder 探索を伴うため、仕事が無いと確認するだけで 1 creep あたり
+/// 最大11回の探索が走っていた。しかも spawn と extension が満タンで建設現場も
+/// 無い平和な状態こそが定常状態なので、全 creep が毎tickこれを払っていた。
+///
+/// 有無の判定だけなら、既にキャッシュ済みの構造物リストを1回舐めれば足りる。
+pub struct WorkSummary {
+    /// 建設現場があるか。
+    pub has_construction: bool,
+    /// 修理対象 (壁を除く) があるか。
+    pub has_repair_target: bool,
+    /// エネルギーの搬入先 (extension / spawn / tower に空きがある) があるか。
+    pub has_energy_sink: bool,
+}
+
+pub fn work_summary() -> Rc<WorkSummary> {
+    WORK_SUMMARY_CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().as_ref() {
+            return Rc::clone(cached);
+        }
+
+        let mut has_construction = false;
+        let mut has_repair_target = false;
+        let mut has_energy_sink = false;
+
+        for room in game::rooms().values() {
+            if !has_construction && !room.find(find::MY_CONSTRUCTION_SITES, None).is_empty() {
+                has_construction = true;
+            }
+
+            for st in room_structures(&room).iter() {
+                if !has_repair_target
+                    && st.structure_type() != StructureType::Wall
+                    && check_repairable(st)
+                {
+                    has_repair_target = true;
+                }
+
+                if !has_energy_sink
+                    && matches!(
+                        st.structure_type(),
+                        StructureType::Extension | StructureType::Spawn | StructureType::Tower
+                    )
+                    && check_transferable(st, &ResourceType::Energy, None)
+                {
+                    has_energy_sink = true;
+                }
+
+                if has_repair_target && has_energy_sink {
+                    break;
+                }
+            }
+
+            if has_construction && has_repair_target && has_energy_sink {
+                break;
+            }
+        }
+
+        let summary = Rc::new(WorkSummary {
+            has_construction,
+            has_repair_target,
+            has_energy_sink,
+        });
+        *cache.borrow_mut() = Some(Rc::clone(&summary));
+        summary
+    })
+}
+
 /// 1部屋分の敵 creep リスト (tick 単位でキャッシュ)。
 ///
 /// 旧実装は creep ごとに `find(HOSTILE_CREEPS)` を呼んでいた。敵の顔ぶれは tick 内で
@@ -233,6 +306,7 @@ pub fn clear_init_flag() {
     ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
     HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());
     TERRAIN_CACHE.with(|cache| cache.borrow_mut().clear());
+    WORK_SUMMARY_CACHE.with(|cache| *cache.borrow_mut() = None);
 
     // MAP_CACHE (静的コスト層) は TTL で管理するのでここでは消さない。
     // 毎 tick 消すと部屋あたりの find(STRUCTURES) が毎 tick 走ってしまう。
@@ -544,7 +618,7 @@ fn static_layer(room_obj: &screeps::objects::Room, room_name: RoomName) -> Local
                 let new_xy = xy(nx, ny);
 
                 // すでに通行不可としてマークされているマスは触らない.
-                if cost_matrix.get(new_xy) >= 0xff {
+                if cost_matrix.get(new_xy) == 0xff {
                     continue;
                 }
 
@@ -625,7 +699,7 @@ fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut Loca
 
                 let cur_cost = cost_matrix.get(new_xy);
                 // すでに通行不可としてマークされているマスは触らない.
-                if cur_cost >= 0xff {
+                if cur_cost == 0xff {
                     continue;
                 }
                 // 自分のランパートの下は安全なので上乗せしない。
@@ -1050,16 +1124,14 @@ pub fn check_stored(
     return false;
 }
 
-pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> {
-    match resource_kind {
-        ResourceKind::ENERGY => {
-            let templist = vec![ResourceType::Energy];
-            return templist;
-        }
-
-        ResourceKind::MINELALS => {
-            let templist = vec![
-                ResourceType::Hydrogen,
+/// 資源分類ごとの資源型リスト。
+///
+/// 旧実装は呼び出しのたびに `vec![]` で最大41要素をヒープ確保していた。
+/// dropped resource のループ内からも呼ばれるので、creep 数 × 資源数だけ
+/// アロケーションが走っていた。中身は不変なので static スライスにする。
+static ENERGY_TYPES: &[ResourceType] = &[ResourceType::Energy];
+static POWER_TYPES: &[ResourceType] = &[ResourceType::Power, ResourceType::Ops];
+static MINERAL_TYPES: &[ResourceType] = &[ResourceType::Hydrogen,
                 ResourceType::Oxygen,
                 ResourceType::Utrium,
                 ResourceType::Lemergium,
@@ -1099,15 +1171,8 @@ pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> 
                 ResourceType::CatalyzedZynthiumAcid,
                 ResourceType::CatalyzedZynthiumAlkalide,
                 ResourceType::CatalyzedGhodiumAcid,
-                ResourceType::CatalyzedGhodiumAlkalide,
-            ];
-
-            return templist;
-        }
-
-        ResourceKind::COMMODITIES => {
-            let templist = vec![
-                ResourceType::Silicon,
+                ResourceType::CatalyzedGhodiumAlkalide,];
+static COMMODITY_TYPES: &[ResourceType] = &[ResourceType::Silicon,
                 ResourceType::Metal,
                 ResourceType::Biomass,
                 ResourceType::Mist,
@@ -1146,30 +1211,27 @@ pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> 
                 ResourceType::Extract,
                 ResourceType::Spirit,
                 ResourceType::Emanation,
-                ResourceType::Essence,
-            ];
-            return templist;
-        }
+                ResourceType::Essence,];
 
-        ResourceKind::POWER => {
-            let templist = vec![ResourceType::Power, ResourceType::Ops];
-            return templist;
-        }
+pub fn resource_types(resource_kind: &ResourceKind) -> &'static [ResourceType] {
+    match resource_kind {
+        ResourceKind::ENERGY => ENERGY_TYPES,
+        ResourceKind::MINELALS => MINERAL_TYPES,
+        ResourceKind::COMMODITIES => COMMODITY_TYPES,
+        ResourceKind::POWER => POWER_TYPES,
     }
+}
+
+/// 旧 API 互換。呼び出し側が Vec を期待している箇所のため残す。
+pub fn make_resoucetype_list(resource_kind: &ResourceKind) -> Vec<ResourceType> {
+    resource_types(resource_kind).to_vec()
 }
 
 pub fn check_resouce_type_kind_matching(
     resource_type: &ResourceType,
     resource_kind: &ResourceKind,
 ) -> bool {
-    let resrouce_type_list = make_resoucetype_list(resource_kind);
-    for chk_resource_type in resrouce_type_list {
-        if *resource_type == chk_resource_type {
-            return true;
-        }
-    }
-
-    return false;
+    resource_types(resource_kind).contains(resource_type)
 }
 
 pub fn find_nearest_transfarable_item(
@@ -1477,7 +1539,7 @@ pub fn find_nearest_active_source(
         }
     }
 
-    if find_item_list.len() <= 0 {
+    if find_item_list.is_empty() {
         if *resource_kind == ResourceKind::ENERGY {
             // active source.
             let item_list = find_all_rooms(creep, || find::SOURCES_ACTIVE);
@@ -1578,7 +1640,7 @@ pub fn find_nearest_stored_source(
         }
     }
 
-    if find_item_list.len() <= 0 {
+    if find_item_list.is_empty() {
         let item_list = all_structures();
 
         for chk_item in item_list.iter() {
@@ -1640,7 +1702,7 @@ pub fn find_nearest_exhausted_source(
             let item_list = find_all_rooms(creep, || find::SOURCES);
 
             for chk_item in item_list.iter() {
-                if (chk_item.energy() <= 0) && (chk_item.ticks_to_regeneration().unwrap_or(0) < 50)
+                if (chk_item.energy() == 0) && (chk_item.ticks_to_regeneration().unwrap_or(0) < 50)
                 {
                     find_item_list.push((chk_item.pos(), 1));
                 }

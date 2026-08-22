@@ -13,6 +13,12 @@ pub fn run_repairer(creep: &Creep) {
     let name = creep.name();
     info!("running repairer {}", creep.name());
 
+    // 修理対象が1つも無いなら、構造物の全走査も探索もせずに委譲する。
+    if !work_summary().has_repair_target {
+        run_upgrader(creep);
+        return;
+    }
+
     debug!("check spawns {}", name);
     let my_spawns = &creep
         .room()

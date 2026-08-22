@@ -235,20 +235,26 @@ pub fn do_spawn() {
             if sum_energy >= body_long_atk_cost {
                 let mut count = 0;
 
-                while (sum_energy >= body_long_atk_cost)
-                    && ((body.len() + body_long_atk_unit.len())
-                        < screeps::constants::MAX_CREEP_SIZE as usize)
-                {
+                loop {
                     count += 1;
-                    if count % 3 == 0 {
-                        if sum_energy >= body_cost {
-                            body.extend(body_unit.iter().cloned());
-                            sum_energy -= body_cost;
-                        }
+                    // 次に足すユニットを先に決めてから、そのサイズで上限を検査する。
+                    let next_is_basic = count % 3 == 0;
+                    let (next_len, next_cost) = if next_is_basic {
+                        (body_unit.len(), body_cost)
+                    } else {
+                        (body_long_atk_unit.len(), body_long_atk_cost)
+                    };
+                    if sum_energy < next_cost
+                        || body.len() + next_len > screeps::constants::MAX_CREEP_SIZE as usize
+                    {
+                        break;
+                    }
+                    if next_is_basic {
+                        body.extend(body_unit.iter().cloned());
                     } else {
                         body.extend(body_long_atk_unit.iter().cloned());
-                        sum_energy -= body_long_atk_cost;
                     }
+                    sum_energy -= next_cost;
                 }
             } else {
                 if ((opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3))
@@ -263,21 +269,27 @@ pub fn do_spawn() {
             if sum_energy >= body_short_atk_cost {
                 let mut count = 0;
 
-                while (sum_energy >= body_short_atk_cost)
-                    && ((body.len() + body_short_atk_unit.len())
-                        < screeps::constants::MAX_CREEP_SIZE as usize)
-                {
+                loop {
                     count += 1;
+                    // 次に足すユニットを先に決めてから、そのサイズで上限を検査する。
+                    let next_is_basic = count % 3 == 0;
+                    let (next_len, next_cost) = if next_is_basic {
+                        (body_unit.len(), body_cost)
+                    } else {
+                        (body_short_atk_unit.len(), body_short_atk_cost)
+                    };
+                    if sum_energy < next_cost
+                        || body.len() + next_len > screeps::constants::MAX_CREEP_SIZE as usize
+                    {
+                        break;
+                    }
 
-                    if count % 3 == 0 {
-                        if sum_energy >= body_cost {
-                            body.extend(body_unit.iter().cloned());
-                            sum_energy -= body_cost;
-                        }
+                    if next_is_basic {
+                        body.extend(body_unit.iter().cloned());
                     } else {
                         body.extend(body_short_atk_unit.iter().cloned());
-                        sum_energy -= body_short_atk_cost;
                     }
+                    sum_energy -= next_cost;
                 }
             } else {
                 if ((opt_num_attackable_long + opt_num_attackable_short) < (num_total_creep / 3))
@@ -292,7 +304,7 @@ pub fn do_spawn() {
         let mut set_num = sum_energy / body_cost;
 
         while (set_num > 0)
-            && ((body.len() + body_unit.len()) < screeps::constants::MAX_CREEP_SIZE as usize)
+            && ((body.len() + body_unit.len()) <= screeps::constants::MAX_CREEP_SIZE as usize)
         {
             body.extend(body_unit.iter().cloned());
             set_num -= 1;

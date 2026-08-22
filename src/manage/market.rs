@@ -7,7 +7,6 @@ use screeps::constants::OrderType;
 use screeps::game::market;
 use screeps::local::{LodashFilter, RoomName};
 use screeps::game::market::Order;
-use screeps::prelude::*;
 use screeps::{game, MarketResourceType, ResourceType};
 use wasm_bindgen::JsValue;
 
