@@ -33,6 +33,57 @@ thread_local! {
         RefCell::new(HashMap::new());
     /// tick 内で共有する仕事の有無。詳細は `work_summary()`。
     static WORK_SUMMARY_CACHE: RefCell<Option<Rc<WorkSummary>>> = RefCell::new(None);
+    /// creep が目指している立ち位置。詳細は `claim_target()`。
+    static TARGET_CLAIMS: RefCell<HashMap<Position, u32>> = RefCell::new(HashMap::new());
+}
+
+/// 味方 creep のマスに乗せるコスト。
+///
+/// 旧実装は敵味方を問わず creep のいるマスを 0xff (通行不可) にしていた。
+/// source の周りは元々マスが少ないので、2〜3体立つだけでその source が到達不能
+/// 扱いになり、経路探索が別の source へ弾かれる。結果として近い source が
+/// 空いていても遠い source に creep が集まる、という偏りが起きていた。
+///
+/// 味方は待てば退くので、避けたいが通れる程度のコストにする。
+/// 平地コストが 2 なので、これは「4マスぶん迂回する価値がある」という重み。
+const MY_CREEP_COST: u8 = 8;
+
+/// 他の creep がすでに目指している立ち位置に乗せるコスト。
+///
+/// 「目的地に誰かが立っているか」しか見ていなかったため、空きマスは何体でも
+/// 同時に選べてしまい、到着してから詰まりに気づいていた。実際に5体が同じ1マスを
+/// 目指す状況が観測された。予約済みのマスを高コストにすれば、経路探索が自然に
+/// 別の空きマスを選ぶ。
+///
+/// 通行不可にはしない。全マスが予約済みでも経路が見つかるようにするため。
+const CLAIMED_TARGET_COST: u8 = 20;
+
+/// この立ち位置を目指すことを宣言する。
+pub fn claim_target(pos: Position) {
+    TARGET_CLAIMS.with(|c| *c.borrow_mut().entry(pos).or_insert(0) += 1);
+}
+
+/// 宣言を取り下げる。目的地を選び直す前に呼ぶ。
+pub fn release_target(pos: Position) {
+    TARGET_CLAIMS.with(|c| {
+        let mut m = c.borrow_mut();
+        if let Some(n) = m.get_mut(&pos) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                m.remove(&pos);
+            }
+        }
+    });
+}
+
+/// このマスを目指している creep がいるか。
+pub fn is_target_claimed(pos: Position) -> bool {
+    TARGET_CLAIMS.with(|c| c.borrow().contains_key(&pos))
+}
+
+/// tick をまたいで持ち越さない。creep_loop が毎tick作り直す。
+pub fn clear_target_claims() {
+    TARGET_CLAIMS.with(|c| c.borrow_mut().clear());
 }
 
 const ROOM_SIZE_X: u8 = 50;
@@ -303,6 +354,7 @@ fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
 
 pub fn clear_init_flag() {
     crate::creeps::clear_colony_cache();
+    clear_target_claims();
     STRUCTURE_CACHE.with(|cache| *cache.borrow_mut() = None);
     ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
     HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());
@@ -661,15 +713,34 @@ fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut Loca
         }
     }
 
-    // 自分のものかどうかを問わず、creepのいるマスは通行不可として扱う.
-    for creep in room_obj.find(find::CREEPS, None) {
-        cost_matrix.set(creep.pos().xy(), 0xff);
+    // 他の creep がすでに目指しているマスを避ける。
+    TARGET_CLAIMS.with(|claims| {
+        for pos in claims.borrow().keys() {
+            if pos.room_name() != room_obj.name() {
+                continue;
+            }
+            let xy = pos.xy();
+            let cur = cost_matrix.get(xy);
+            if cur < 0xff {
+                cost_matrix.set(xy, cur.max(CLAIMED_TARGET_COST));
+            }
+        }
+    });
 
-        // enemyの射程圏内は、Rampartが無い限りコストをあげる.
+    // creep のいるマス。敵は本当の障害物だが、味方は待てば退く。
+    for creep in room_obj.find(find::CREEPS, None) {
         if creep.my() {
+            let xy = creep.pos().xy();
+            let cur = cost_matrix.get(xy);
+            if cur < 0xff {
+                cost_matrix.set(xy, cur.max(MY_CREEP_COST));
+            }
             continue;
         }
 
+        cost_matrix.set(creep.pos().xy(), 0xff);
+
+        // enemyの射程圏内は、Rampartが無い限りコストをあげる.
         // 旧実装は match で上書きし続けていたため body の最後に現れた
         // 攻撃パーツが勝ち、[RangedAttack, Attack] の順だとレンジャーを
         // 射程1と誤認していた。最大値を採る。

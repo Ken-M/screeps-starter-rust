@@ -272,6 +272,14 @@ fn reset_source_target(
 ) -> (SearchResults, Position) {
     debug!("harvesting : reset_source_target");
 
+    // 自分がすでに予約しているマスがあれば先に外す。
+    // 外さないと、自分の予約を避けて別のマスを選んでしまう。
+    if let Ok(Some(json)) = creep.memory().string("target_pos") {
+        if let Ok(prev) = serde_json::from_str::<Position>(&json) {
+            release_target(prev);
+        }
+    }
+
     if is_harvester == true {
         // active sourceをチェック.
         let res = find_nearest_active_source(&creep, harvest_kind, false);
@@ -286,6 +294,7 @@ fn reset_source_target(
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", path_ttl_from(&path));
+            claim_target(last_pos);
             creep.memory().set("will_harvest_from_storage", false);
             creep.memory().del("nothing_to_harvest");
 
@@ -307,6 +316,7 @@ fn reset_source_target(
                 let json_str = serde_json::to_string(&last_pos).unwrap();
                 creep.memory().set("target_pos", json_str);
                 creep.memory().set("target_pos_count", path_ttl_from(&path));
+                claim_target(last_pos);
                 creep.memory().set("will_harvest_from_storage", true);
                 creep.memory().del("nothing_to_harvest");
 
@@ -328,6 +338,7 @@ fn reset_source_target(
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", path_ttl_from(&path));
+            claim_target(last_pos);
             creep.memory().set("will_harvest_from_storage", true);
             creep.memory().del("nothing_to_harvest");
 
@@ -352,6 +363,7 @@ fn reset_source_target(
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
             creep.memory().set("target_pos_count", path_ttl_from(&path));
+            claim_target(last_pos);
             creep.memory().set("will_harvest_from_storage", false);
             creep.memory().del("nothing_to_harvest");
 
@@ -373,6 +385,7 @@ fn reset_source_target(
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
         creep.memory().set("target_pos_count", path_ttl_from(&path));
+        claim_target(last_pos);
         creep.memory().set("will_harvest_from_storage", true);
         creep.memory().del("nothing_to_harvest");
 
@@ -579,6 +592,14 @@ pub fn creep_loop() {
             *role_counts.entry(role.clone()).or_insert(0) += 1;
             if role == ROLE_HARVESTER || role == ROLE_HARVESTER_SPAWN {
                 cap_worker_carry += creep.store().get_capacity(None) as u128;
+            }
+        }
+
+        // すでに目指している立ち位置を予約として登録する。
+        // 他の creep が同じマスを選ばないようにするため。
+        if let Ok(Some(json)) = cmem.string("target_pos") {
+            if let Ok(pos) = serde_json::from_str::<Position>(&json) {
+                claim_target(pos);
             }
         }
 
@@ -1112,6 +1133,7 @@ pub fn creep_loop() {
             if is_harvested == false {
                 if creep.pos() == defined_target_pos {
                     debug!("already arrived, but can't harvest!!!");
+                    release_target(defined_target_pos);
                     cmem.del("target_pos");
                 } else {
                     let res = move_by_search_result(&creep, &path_search_result);
