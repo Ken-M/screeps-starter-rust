@@ -51,3 +51,7 @@ desktop.ini
 
 # Old config w/ secrets (kept until token migration) #
 screeps.toml
+
+# Captured game logs #
+#######################
+logs/
