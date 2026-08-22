@@ -151,23 +151,54 @@ fn build_body(role: &str, energy: u32) -> Vec<Part> {
             unit_body(&[Part::Carry, Part::Move], energy)
         }
 
-        crate::creeps::ROLE_DEFENDER => {
-            // 戦闘専用。MOVE を前に並べ、被弾はまず MOVE が受ける
-            // (ATTACK が残っていれば反撃は続けられる)。
-            let unit_cost = Part::Move.cost() + Part::Attack.cost();
-            let n = (energy / unit_cost) as usize;
-            let n = n.min(screeps::constants::MAX_CREEP_SIZE as usize / 2);
-            if n == 0 {
-                return Vec::new();
-            }
-            let mut body = vec![Part::Move; n];
-            body.extend(std::iter::repeat(Part::Attack).take(n));
-            body
-        }
+        crate::creeps::ROLE_DEFENDER => build_defender_body(energy, false),
 
         // worker とその他は汎用構成。平地で満載でも全速の 2:1:1。
         _ => unit_body(&[Part::Move, Part::Move, Part::Carry, Part::Work], energy),
     }
+}
+
+/// defender の body。戦闘専用で、MOVE を前に並べて被弾はまず MOVE が受ける
+/// (武器パーツが残っていれば反撃は続けられる)。
+///
+/// ranged なら RANGED_ATTACK (射程3)、そうでなければ ATTACK (射程1)。
+/// 近接は rampart の栓の最前列で敵を受け止める役、遠隔は射撃陣地から
+/// 敵近接の間合いの外で援護する役 (defender.rs の位置取りを参照)。
+fn build_defender_body(energy: u32, ranged: bool) -> Vec<Part> {
+    let weapon = if ranged { Part::RangedAttack } else { Part::Attack };
+    let unit_cost = Part::Move.cost() + weapon.cost();
+    let n = (energy / unit_cost) as usize;
+    let n = n.min(screeps::constants::MAX_CREEP_SIZE as usize / 2);
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut body = vec![Part::Move; n];
+    body.extend(std::iter::repeat(weapon).take(n));
+    body
+}
+
+/// 次に作る defender を遠隔型にするか。近接が先で、以後は交互に揃える。
+/// 「近接1 + 遠隔1」が role_targets の defender 目標 (2) の基本形。
+fn defender_should_be_ranged() -> bool {
+    let mut melee = 0;
+    let mut ranged = 0;
+    for creep in game::creeps().values() {
+        let is_defender = creep
+            .memory()
+            .string(crate::mem::keys::ROLE)
+            .ok()
+            .flatten()
+            .is_some_and(|r| r == crate::creeps::ROLE_DEFENDER);
+        if !is_defender {
+            continue;
+        }
+        if creep.body().iter().any(|p| p.part() == Part::RangedAttack) {
+            ranged += 1;
+        } else {
+            melee += 1;
+        }
+    }
+    ranged < melee
 }
 
 /// 単位構成を予算いっぱいまで繰り返す。
@@ -267,7 +298,11 @@ pub fn do_spawn() {
             );
         }
 
-        let body = build_body(role, budget);
+        let body = if role == crate::creeps::ROLE_DEFENDER {
+            build_defender_body(budget, defender_should_be_ranged())
+        } else {
+            build_body(role, budget)
+        };
         if body.is_empty() {
             continue;
         }
@@ -360,6 +395,20 @@ mod tests {
         assert!(!body.is_empty());
         let first_attack = body.iter().position(|p| *p == Part::Attack).unwrap();
         assert!(body[..first_attack].iter().all(|p| *p == Part::Move));
+    }
+
+    #[test]
+    fn 遠隔defenderはranged_attackだけを積みmoveが前に並ぶ() {
+        // RANGED_ATTACK(150) + MOVE(50) = 200/unit。660 なら3ユニット。
+        let body = build_defender_body(660, true);
+        assert_eq!(
+            body.iter().filter(|p| **p == Part::RangedAttack).count(),
+            3
+        );
+        assert_eq!(body.iter().filter(|p| **p == Part::Move).count(), 3);
+        let first_weapon = body.iter().position(|p| *p == Part::RangedAttack).unwrap();
+        assert!(body[..first_weapon].iter().all(|p| *p == Part::Move));
+        assert!(!body.contains(&Part::Attack));
     }
 
     #[test]
