@@ -48,15 +48,20 @@ thread_local! {
 /// 平地コストが 2 なので、これは「4マスぶん迂回する価値がある」という重み。
 const MY_CREEP_COST: u8 = 8;
 
-/// 他の creep がすでに目指している立ち位置に乗せるコスト。
+/// 予約1件あたりの上乗せコスト。
 ///
-/// 「目的地に誰かが立っているか」しか見ていなかったため、空きマスは何体でも
-/// 同時に選べてしまい、到着してから詰まりに気づいていた。実際に5体が同じ1マスを
-/// 目指す状況が観測された。予約済みのマスを高コストにすれば、経路探索が自然に
-/// 別の空きマスを選ぶ。
+/// 当初は定額20だった。これには2つ問題があった。
+/// 1. 何体予約していても20のままで、予約が積み重なるほど詰まるという情報が
+///    経路探索に伝わらない。
+/// 2. creep がすでにその source の周りに固まっている場合、そこから別の source
+///    まで歩くコスト (17マスなら34) より予約済みマスに突っ込むコスト (20) の
+///    ほうが安く、経路探索は合理的に殺到を選んでしまう。実際に7体が同じ1マスを
+///    目指す状況が観測された。
 ///
-/// 通行不可にはしない。全マスが予約済みでも経路が見つかるようにするため。
-const CLAIMED_TARGET_COST: u8 = 20;
+/// 件数比例にする。1件で50 (=25マスぶんの迂回に相当) なので、隣接マスに空きが
+/// あればそちらへ、その source の空きマスが全て予約済みなら別の source へ逸れる。
+/// 上限254で頭打ちにし、全マスが予約済みでも経路自体は見つかるようにする。
+const CLAIMED_TARGET_COST_PER_CLAIM: u32 = 50;
 
 /// この立ち位置を目指すことを宣言する。
 pub fn claim_target(pos: Position) {
@@ -713,16 +718,17 @@ fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut Loca
         }
     }
 
-    // 他の creep がすでに目指しているマスを避ける。
+    // 他の creep がすでに目指しているマスを避ける。予約数に比例して重くする。
     TARGET_CLAIMS.with(|claims| {
-        for pos in claims.borrow().keys() {
+        for (pos, count) in claims.borrow().iter() {
             if pos.room_name() != room_obj.name() {
                 continue;
             }
             let xy = pos.xy();
             let cur = cost_matrix.get(xy);
             if cur < 0xff {
-                cost_matrix.set(xy, cur.max(CLAIMED_TARGET_COST));
+                let add = (count * CLAIMED_TARGET_COST_PER_CLAIM).min(250) as u8;
+                cost_matrix.set(xy, cur.saturating_add(add).min(254));
             }
         }
     });
