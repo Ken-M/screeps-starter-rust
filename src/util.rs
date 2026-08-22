@@ -302,6 +302,7 @@ fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
 }
 
 pub fn clear_init_flag() {
+    crate::creeps::clear_colony_cache();
     STRUCTURE_CACHE.with(|cache| *cache.borrow_mut() = None);
     ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
     HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());

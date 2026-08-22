@@ -69,8 +69,34 @@ pub struct ColonyState {
     pub has_extractor: bool,
 }
 
+thread_local! {
+    /// tick 内で共有するコロニー観測。詳細は `ColonyState::observe()`。
+    static COLONY_CACHE: std::cell::RefCell<Option<std::rc::Rc<ColonyState>>> =
+        std::cell::RefCell::new(None);
+}
+
+/// tick 先頭でキャッシュを捨てる。
+pub fn clear_colony_cache() {
+    COLONY_CACHE.with(|c| *c.borrow_mut() = None);
+}
+
 impl ColonyState {
-    pub fn observe() -> Self {
+    /// tick 内で1回だけ観測する。
+    ///
+    /// do_spawn と creep_loop の両方が使うため、素直に呼ぶと部屋 × 構造物 ×
+    /// source の走査が 1 tick に2回走る。
+    pub fn observe() -> std::rc::Rc<Self> {
+        COLONY_CACHE.with(|cache| {
+            if let Some(cached) = cache.borrow().as_ref() {
+                return std::rc::Rc::clone(cached);
+            }
+            let state = std::rc::Rc::new(Self::measure());
+            *cache.borrow_mut() = Some(std::rc::Rc::clone(&state));
+            state
+        })
+    }
+
+    fn measure() -> Self {
         let mut has_terminal = false;
         let mut has_extractor = false;
 
@@ -469,6 +495,32 @@ fn get_role_and_attacker_kind(creep: &Creep) -> (String, AttackerKind) {
     return (role_string, attacker_kind);
 }
 
+/// 1 tick 分の creep の情報。
+///
+/// body も Memory も JS 越しの取得なので、tick 内で何度も読み直すと高くつく。
+/// 旧実装は集計ループと実処理ループでそれぞれ body を読み、さらに再配分が
+/// 目標ロールの数だけ全 creep を舐め直していたため、1体の body を 1 tick に
+/// 10 回近く読むことがあった。最初に1回だけ読んで使い回す。
+struct CreepInfo {
+    creep: Creep,
+    name: String,
+    role: String,
+    attacker_kind: AttackerKind,
+    work: u32,
+    carry: u32,
+}
+
+impl CreepInfo {
+    /// この creep がそのロールをこなせる body を持っているか。
+    fn can_fill(&self, role: &str) -> bool {
+        match role {
+            ROLE_CARRIER_MINERAL | ROLE_HAULER => self.carry > 0,
+            ROLE_MINER => self.work > 0,
+            _ => self.work > 0 && self.carry > 0,
+        }
+    }
+}
+
 pub fn creep_loop() {
     // ロール別の実数。旧実装は7個の個別変数だったが、目標との差分で配分するには
     // 名前で引ける形の方が扱いやすい。
@@ -483,38 +535,61 @@ pub fn creep_loop() {
     let colony = ColonyState::observe();
     let total_creeps = colony.total_creeps as usize;
 
+    // creep ごとの情報を1回だけ集める。
+    let mut roster: Vec<CreepInfo> = Vec::with_capacity(total_creeps);
+
     for creep in game::creeps().values() {
         let name = creep.name();
-        debug!("checking creep {}", name);
+        let cmem = creep.memory();
 
-        let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
+        let role = cmem
+            .string("role")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| String::from("none"));
 
-        let role_string = role_and_attacker_kind.0;
-        let attacker_kind = role_and_attacker_kind.1;
-
-        debug!("role:{:?}:atk:{:?}", role_string, attacker_kind);
-
-        match attacker_kind {
-            AttackerKind::SHORT => {
-                opt_num_attackable_short += 1;
+        // body の走査はここ1回だけ。攻撃能力とパーツ数を同時に数える。
+        let mut work = 0;
+        let mut carry = 0;
+        let mut attacker_kind = AttackerKind::NONE;
+        for part in creep.body().iter() {
+            if part.hits() == 0 {
+                continue;
             }
-
-            AttackerKind::RANGED => {
-                opt_num_attackable_long += 1;
-            }
-
-            AttackerKind::NONE => {
-                //nothing.
+            match part.part() {
+                Part::Work => work += 1,
+                Part::Carry => carry += 1,
+                Part::Attack => {
+                    if attacker_kind == AttackerKind::NONE {
+                        attacker_kind = AttackerKind::SHORT;
+                    }
+                }
+                Part::RangedAttack => attacker_kind = AttackerKind::RANGED,
+                _ => {}
             }
         }
 
-        if role_string != "none" {
-            *role_counts.entry(role_string.clone()).or_insert(0) += 1;
+        match attacker_kind {
+            AttackerKind::SHORT => opt_num_attackable_short += 1,
+            AttackerKind::RANGED => opt_num_attackable_long += 1,
+            AttackerKind::NONE => {}
+        }
 
-            if role_string == ROLE_HARVESTER || role_string == ROLE_HARVESTER_SPAWN {
+        if role != "none" {
+            *role_counts.entry(role.clone()).or_insert(0) += 1;
+            if role == ROLE_HARVESTER || role == ROLE_HARVESTER_SPAWN {
                 cap_worker_carry += creep.store().get_capacity(None) as u128;
             }
         }
+
+        roster.push(CreepInfo {
+            creep,
+            name,
+            role,
+            attacker_kind,
+            work,
+            carry,
+        });
     }
 
     // 採取係が枯渇したら全ロールを白紙に戻して再編成する。
@@ -530,8 +605,9 @@ pub fn creep_loop() {
         + role_counts.get(ROLE_HARVESTER_SPAWN).copied().unwrap_or(0);
     if (harvester_total <= 2) && (total_creeps > harvester_total as usize) {
         warn!("harvesters depleted; resetting all roles");
-        for creep in game::creeps().values() {
-            creep.memory().del("role");
+        for info in roster.iter_mut() {
+            info.creep.memory().del("role");
+            info.role = String::from("none");
         }
 
         role_counts.clear();
@@ -568,21 +644,18 @@ pub fn creep_loop() {
             };
 
             // 余っているロールの creep を1体、こなせるなら移す。
-            let victim = game::creeps().values().find(|c| {
-                c.memory()
-                    .string("role")
-                    .ok()
-                    .flatten()
-                    .map_or(false, |r| r == surplus_role)
-                    && can_fill_role(c, role)
-            });
+            // 集めておいたロスターから選ぶので、ここで body も Memory も読み直さない。
+            let victim = roster
+                .iter_mut()
+                .find(|i| i.role == surplus_role && i.can_fill(role));
 
             if let Some(victim) = victim {
-                info!("rebalance {}: {} -> {}", victim.name(), surplus_role, role);
-                victim.memory().set("role", *role);
+                info!("rebalance {}: {} -> {}", victim.name, surplus_role, role);
+                victim.creep.memory().set("role", *role);
                 // 配達途中の状態を持ち越さない。
-                victim.memory().del("target_pos");
-                victim.memory().del("target_pos_count");
+                victim.creep.memory().del("target_pos");
+                victim.creep.memory().del("target_pos_count");
+                victim.role = role.to_string();
 
                 *role_counts.entry(surplus_role.to_string()).or_insert(0) -= 1;
                 *role_counts.entry(role.to_string()).or_insert(0) += 1;
@@ -591,20 +664,19 @@ pub fn creep_loop() {
         }
     }
 
-    for creep in game::creeps().values() {
-        let name = creep.name();
-        info!("running creep {}, cpu:{}", name, game::cpu::get_used());
+    for info in roster.iter() {
+        let creep = &info.creep;
+        let name = info.name.clone();
+        debug!("running creep {}, cpu:{}", name, game::cpu::get_used());
 
         // memory は JS の getter なので 1 回だけ取って使い回す。
         let cmem = creep.memory();
 
-        let role_and_attacker_kind = get_role_and_attacker_kind(&creep);
         let mut harvest_kind: ResourceKind = ResourceKind::ENERGY;
-
         let mut is_harvester = false;
 
-        let mut role_string = role_and_attacker_kind.0;
-        let attacker_kind = role_and_attacker_kind.1;
+        let mut role_string = info.role.clone();
+        let attacker_kind = &info.attacker_kind;
 
         if role_string == "none" {
             let targets = role_targets(&colony);
@@ -640,8 +712,8 @@ pub fn creep_loop() {
 
         //// atacker check.
         // 戻り値は「移動を消費したか」。攻撃しただけなら経済の仕事も続ける。
-        if attacker_kind != AttackerKind::NONE {
-            let moved_to_enemy = attacker_routine(&creep, &attacker_kind);
+        if *attacker_kind != AttackerKind::NONE {
+            let moved_to_enemy = attacker_routine(creep, attacker_kind);
 
             if moved_to_enemy {
                 continue;
