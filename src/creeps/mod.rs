@@ -702,6 +702,7 @@ pub fn creep_loop() {
                 // 配達途中の状態を持ち越さない。
                 victim.creep.memory().del("target_pos");
                 victim.creep.memory().del("target_pos_count");
+                victim.creep.memory().del("upgrade_duty");
                 victim.role = role.to_string();
 
                 *role_counts.entry(surplus_role.to_string()).or_insert(0) -= 1;
@@ -711,10 +712,23 @@ pub fn creep_loop() {
         }
     }
 
-    // この tick でまだ「固定アップグレード係」を出していないか。
-    // worker のうち最初の1体だけを常時アップグレードに充て、建設が続いても
-    // controller の進捗が完全に止まらないようにする。
-    let mut upgrade_slot_taken = false;
+    // 固定アップグレード係を1体維持する。
+    //
+    // 当初は「各tickの最初の worker」を充てていたが、この指名は tick ごとに
+    // 別の creep に移り得る。controller まで20マス歩く道中で指名が外れると
+    // 建設に戻ってしまい、結局誰も到着しない (実測: タイマー毎tick減少、
+    // controller 付近の upgrader ゼロ)。Memory の upgrade_duty フラグで
+    // 1体に固定し、その creep が死んだら次の worker を指名する。
+    let worker_family = |r: &str| matches!(r, "worker" | "builder" | "upgrader" | "repairer");
+    let duty_alive = roster.iter().any(|i| {
+        worker_family(&i.role) && i.creep.memory().bool("upgrade_duty")
+    });
+    if !duty_alive {
+        if let Some(candidate) = roster.iter().find(|i| worker_family(&i.role)) {
+            info!("{} takes upgrade duty", candidate.name);
+            candidate.creep.memory().set("upgrade_duty", true);
+        }
+    }
 
     for info in roster.iter() {
         let creep = &info.creep;
@@ -1296,16 +1310,12 @@ pub fn creep_loop() {
                 }
 
                 "worker" => {
-                    let force_upgrade = !upgrade_slot_taken;
-                    upgrade_slot_taken = true;
-                    worker::run_worker(creep, force_upgrade);
+                    worker::run_worker(creep, cmem.bool("upgrade_duty"));
                 }
 
                 // 旧ロール名。生きている creep が持っている間は worker として扱う。
                 "builder" | "upgrader" | "repairer" => {
-                    let force_upgrade = !upgrade_slot_taken;
-                    upgrade_slot_taken = true;
-                    worker::run_worker(creep, force_upgrade);
+                    worker::run_worker(creep, cmem.bool("upgrade_duty"));
                 }
 
                 "attacker" => {}
