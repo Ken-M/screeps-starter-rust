@@ -322,13 +322,31 @@ pub fn creep_loop() {
         }
     }
 
-    // if no harvester, clear role.
+    // 採取係が枯渇したら全ロールを白紙に戻して再編成する。
+    //
+    // 旧実装はロールを消すだけでカウンタを据え置いていたため、直後の再割り当てが
+    // 「creepのロールはゼロなのにカウンタは満室」という状態で走り、upgrader も
+    // builder も repairer も充足済みと誤判定してスキップ、cap_worker_carry も
+    // 古い大きな値のままで harvester が1体も作られず、残り全員が catch-all の
+    // repairer に落ちていた。採取係が枯渇した瞬間に全creepが最も重い委譲チェーンを
+    // 走るという、最悪のタイミングで最悪の挙動になっていた。
+    // ロールを消すならカウンタも同じ地点まで巻き戻す。
     if (num_harvester + num_harvester_spawn <= 2)
         && (total_creeps > (num_harvester + num_harvester_spawn) as usize)
     {
+        warn!("harvesters depleted; resetting all roles");
         for creep in game::creeps().values() {
             creep.memory().del("role");
         }
+
+        num_builder = 0;
+        num_harvester = 0;
+        num_upgrader = 0;
+        num_harvester_spawn = 0;
+        num_harvester_mineral = 0;
+        num_carrier_mineral = 0;
+        num_repairer = 0;
+        cap_worker_carry = 0;
     }
 
     for creep in game::creeps().values() {
@@ -428,10 +446,25 @@ pub fn creep_loop() {
             harvest_kind = ResourceKind::MINELALS;
         }
 
+        // 配達できる荷 (今のロールが扱う資源) の量。
+        //
+        // 旧実装は採取フェーズへの復帰条件に get_used_capacity(None)、つまり
+        // 「全資源が空か」を使っていた。ロール変更でミネラルを抱えたままエネルギー系の
+        // ロールになったcreepは、配達先をエネルギーでしか探さないので必ず失敗し、
+        // かつ荷が残っているので採取フェーズにも戻れず、寿命が尽きるまで毎tick
+        // 全室スキャンを回し続けるデッドロックに陥っていた。
+        // 判定を「今のロールで配達できる荷があるか」に変える。
+        let store = creep.store();
+        let deliverable: u32 = make_resoucetype_list(&harvest_kind)
+            .iter()
+            .map(|rt| store.get_used_capacity(Some(*rt)))
+            .sum();
+        let total_used = store.get_used_capacity(None);
+        let free_capacity = store.get_free_capacity(None);
+
         if creep.memory().bool("harvesting") {
-            if (creep.store().get_free_capacity(None) == 0)
-                || ((creep.memory().bool("nothing_to_harvest"))
-                    && (creep.store().get_used_capacity(None) > 0))
+            if (free_capacity == 0)
+                || ((creep.memory().bool("nothing_to_harvest")) && (deliverable > 0))
             {
                 creep.memory().set("harvesting", false);
                 creep.memory().del("target_pos");
@@ -439,7 +472,22 @@ pub fn creep_loop() {
                 creep.memory().del("nothing_to_harvest");
             }
         } else {
-            if creep.store().get_used_capacity(None) == 0 {
+            if deliverable == 0 {
+                // 配達できる荷が無いなら採取に戻る。ただし配達できない荷で満杯だと
+                // 採取もできないので、その場合だけ捨てて詰まりを解消する。
+                if total_used > 0 && free_capacity == 0 {
+                    for resource in store.store_types() {
+                        if !check_resouce_type_kind_matching(&resource, &harvest_kind) {
+                            warn!(
+                                "{} is stuck with undeliverable {:?}; dropping",
+                                name, resource
+                            );
+                            let _ = creep.drop(resource, None);
+                            break;
+                        }
+                    }
+                }
+
                 creep.memory().set("harvesting", true);
                 creep.memory().del("target_pos");
                 creep.memory().del("harvested_from_storage");
