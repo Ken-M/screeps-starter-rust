@@ -126,11 +126,62 @@ fn plan_room(room: &Room) {
         }
     }
 
-    // --- 3. 幹線道路 ---
+    // --- 3. 重要建造物の rampart ---
+    // spawn / tower / storage / terminal のマスに直接張る。被弾はまず
+    // rampart が受けるので、本体の HP が減らず safe mode の温存にもつながる
+    // (check_safe_mode は重要建造物の HP 減少で発動を判定している)。
+    // 対象の並びは check_safe_mode の重要建造物と揃えること。
+    if budget > 0 && allowed(StructureType::Rampart, rcl) > 0 {
+        for s in structures.iter() {
+            if budget == 0 {
+                break;
+            }
+            let critical = matches!(
+                s.structure_type(),
+                StructureType::Spawn
+                    | StructureType::Tower
+                    | StructureType::Storage
+                    | StructureType::Terminal
+            );
+            if !critical || !is_mine(s) {
+                continue;
+            }
+            let p = s.pos();
+            let (x, y) = (p.x().u8(), p.y().u8());
+            if has_rampart_at(x, y, &structures, &sites) || placed_now.contains(&(x, y)) {
+                continue;
+            }
+            let xy = RoomXY::checked_new(x, y).expect("in range");
+            if try_place(room, xy, StructureType::Rampart) {
+                placed_now.insert((x, y));
+                budget -= 1;
+            }
+        }
+    }
+
+    // --- 4. 幹線道路 ---
     // spawn から各 source と controller へ。creep の往復が最も多い経路。
     if budget > 0 {
         plan_roads(room, spawn_pos, &blocked, &mut budget, &mut placed_now);
     }
+}
+
+/// そのマスに rampart (完成済み or 建設予定) があるか。
+/// rampart は他の建造物と同じマスに重ねて置くため、blocked 判定は使えない。
+fn has_rampart_at(
+    x: u8,
+    y: u8,
+    structures: &[StructureObject],
+    sites: &[screeps::objects::ConstructionSite],
+) -> bool {
+    let at = |p: Position| p.x().u8() == x && p.y().u8() == y;
+
+    structures
+        .iter()
+        .any(|s| s.structure_type() == StructureType::Rampart && at(s.pos()))
+        || sites
+            .iter()
+            .any(|c| c.structure_type() == StructureType::Rampart && at(c.pos()))
 }
 
 /// RCL に対するその種類の建設可能数。
