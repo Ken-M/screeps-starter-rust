@@ -9,7 +9,7 @@ use screeps::pathfinder::{
 };
 use screeps::prelude::*;
 use screeps::look::LookResult;
-use screeps::{game, CostMatrix, LocalCostMatrix};
+use screeps::{game, CostMatrix, LocalCostMatrix, LocalRoomTerrain};
 
 use std::cell::RefCell;
 use std::cmp::*;
@@ -28,12 +28,26 @@ thread_local! {
     /// tick 内で共有する部屋ごとの敵リスト。詳細は `room_hostiles()`。
     static HOSTILE_CACHE: RefCell<HashMap<RoomName, Rc<Vec<screeps::objects::Creep>>>> =
         RefCell::new(HashMap::new());
+    /// tick 内で共有する部屋ごとの地形。詳細は `room_terrain()`。
+    static TERRAIN_CACHE: RefCell<HashMap<RoomName, Rc<LocalRoomTerrain>>> =
+        RefCell::new(HashMap::new());
 }
 
 const ROOM_SIZE_X: u8 = 50;
 const ROOM_SIZE_Y: u8 = 50;
+const ROOM_AREA: usize = (ROOM_SIZE_X as usize) * (ROOM_SIZE_Y as usize);
 
-type Data = HashMap<RoomName, LocalCostMatrix>;
+/// 静的コスト層を作り直す間隔 (tick)。
+/// 地形・道路・壁・建設現場はこの程度の間隔で見直せば十分。
+const STATIC_LAYER_TTL: u32 = 100;
+
+/// RoomXY を 0..2500 の添字へ。ビットマップ用。
+fn xy_index(pos: RoomXY) -> usize {
+    (pos.y.u8() as usize) * (ROOM_SIZE_X as usize) + (pos.x.u8() as usize)
+}
+
+/// 静的コスト層のキャッシュ。値は (構築した tick, マトリクス)。
+type Data = HashMap<RoomName, (u32, LocalCostMatrix)>;
 
 type ConstructionProgressAverage = HashMap<RoomName, u128>;
 type StructureHpAverage = HashMap<RoomName, u128>;
@@ -218,9 +232,10 @@ pub fn clear_init_flag() {
     STRUCTURE_CACHE.with(|cache| *cache.borrow_mut() = None);
     ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
     HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());
+    TERRAIN_CACHE.with(|cache| cache.borrow_mut().clear());
 
-    let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
-    cost_matrix_cache.clear();
+    // MAP_CACHE (静的コスト層) は TTL で管理するのでここでは消さない。
+    // 毎 tick 消すと部屋あたりの find(STRUCTURES) が毎 tick 走ってしまう。
 
     let mut construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.write().unwrap();
     construction_progress_average.clear();
@@ -443,208 +458,192 @@ pub fn get_construction_progress_average(room_name: &RoomName) -> (u128, u128) {
     return (0, 0);
 }
 
+/// 部屋のコストマトリクスを組み立てる。
+///
+/// 中身は寿命の異なる2層に分かれる。
+///   静的層: 地形 / 道路 / 壁 / ランパート / 建設現場 — 数百 tick 変わらない
+///   動的層: creep の位置 / 敵の危険域 — 毎 tick 変わる
+/// 旧実装は両方まとめて毎 tick 再構築していた。静的層を tick をまたいで保持すれば、
+/// 部屋あたりの `find(STRUCTURES)` と `find(MY_CONSTRUCTION_SITES)` が
+/// STATIC_LAYER_TTL に 1 回で済む。
 fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult {
-    let room = game::rooms().get(room_name);
-    let mut cost_matrix = LocalCostMatrix::default();
-    let mut is_cache_used = false;
+    let Some(room_obj) = game::rooms().get(room_name) else {
+        // 視界の無い部屋は既定コストのまま。
+        return MultiRoomCostResult::Default;
+    };
+
+    let mut cost_matrix = static_layer(&room_obj, room_name);
+
+    // ここから動的層。tick ごとに作り直す。
+    apply_dynamic_layer(&room_obj, &mut cost_matrix);
+
+    MultiRoomCostResult::CostMatrix(CostMatrix::from(cost_matrix))
+}
+
+/// 静的層 (地形・構造物・建設現場・source周辺) を組み立てる。TTL 付きでキャッシュする。
+fn static_layer(room_obj: &screeps::objects::Room, room_name: RoomName) -> LocalCostMatrix {
+    let now = game::time();
 
     {
-        let cost_matrix_cache = MAP_CACHE.read().unwrap();
-        let cache_data = cost_matrix_cache.get(&room_name);
-
-        match cache_data {
-            Some(value) => {
-                // use cached matrix.
-                debug!("Room:{}, cache is used.", room_name);
-                cost_matrix = value.clone();
-                is_cache_used = true;
-            }
-
-            None => {
-                info!("Room:{}, cache is not found.", room_name);
+        let cache = MAP_CACHE.read().unwrap();
+        if let Some((built_at, matrix)) = cache.get(&room_name) {
+            if now.saturating_sub(*built_at) < STATIC_LAYER_TTL {
+                return matrix.clone();
             }
         }
     }
 
-    if is_cache_used == false {
-        match room {
-            Some(room_obj) => {
-                let structures = room_obj.find(find::STRUCTURES, None);
+    debug!("Room:{}, rebuilding static cost layer.", room_name);
 
-                for chk_struct in structures {
-                    // Roadのコストをさげる.
-                    if chk_struct.structure_type() == StructureType::Road {
-                        // Favor roads over plain tiles
-                        cost_matrix.set(chk_struct.pos().xy(), 1);
+    let mut cost_matrix = LocalCostMatrix::default();
 
-                    // 通行不能なStructureはブロック.
-                    } else if chk_struct.structure_type() != StructureType::Container
-                        && (chk_struct.structure_type() != StructureType::Rampart
-                            || check_my_structure(&chk_struct) == false)
-                    {
-                        // Can't walk through non-walkable buildings
-                        cost_matrix.set(chk_struct.pos().xy(), 0xff);
-                    }
-                }
+    // 地形を wasm 線形メモリへ写して以降の参照を JS 呼び出しなしにする。
+    let terrain = room_terrain(room_obj);
 
-                // ConstructionSiteの通行不可なものをマーク.
-                let construction_sites = room_obj.find(find::MY_CONSTRUCTION_SITES, None);
-                for construction_site in construction_sites {
-                    if construction_site.structure_type() != StructureType::Road
-                        && construction_site.structure_type() != StructureType::Container
-                        && construction_site.structure_type() != StructureType::Rampart
-                    {
-                        // Can't walk through non-walkable construction sites.
-                        cost_matrix.set(construction_site.pos().xy(), 0xff);
-                    }
-                }
+    // 道路とランパートの位置をビットマップ化しておく。
+    // 旧実装は内側ループで同じマスに対し look_for_at_xy を2回呼んでいた。
+    let mut is_road = vec![false; ROOM_AREA];
+    let structures = room_structures(room_obj);
 
-                // active sourceの周辺はコストをあげる.
-                let item_list = room_obj.find(find::SOURCES_ACTIVE, None);
+    for chk_struct in structures.iter() {
+        let pos_xy = chk_struct.pos().xy();
+        let idx = xy_index(pos_xy);
 
-                for chk_item in item_list.iter() {
-                    for x_pos_offset in 0..=2 {
-                        for y_pos_offset in 0..=2 {
-                            let new_x_pos: i8 = min(
-                                max(chk_item.pos().x().u8() as i8 + x_pos_offset - 1, 0),
-                                ROOM_SIZE_X as i8 - 1,
-                            );
-                            let new_y_pos: i8 = min(
-                                max(chk_item.pos().y().u8() as i8 + y_pos_offset - 1, 0),
-                                ROOM_SIZE_Y as i8 - 1,
-                            );
-
-                            let new_xy = xy(new_x_pos as u8, new_y_pos as u8);
-                            let cur_cost = cost_matrix.get(new_xy);
-                            // すでに通行不可としてマークされているマスは触らない.
-                            if cur_cost < 0xff {
-                                if room_obj.get_terrain().get(new_x_pos as u8, new_y_pos as u8)
-                                    != Terrain::Wall
-                                {
-                                    let new_cost = 11;
-                                    cost_matrix.set(new_xy, new_cost);
-                                } else if room_obj
-                                    .look_for_at_xy(look::STRUCTURES, new_x_pos as u8, new_y_pos as u8)
-                                    .iter()
-                                    .filter(|s| s.structure_type() == StructureType::Road)
-                                    .count()
-                                    > 0
-                                {
-                                    //Road かつ Wall.
-                                    cost_matrix.set(new_xy, 2);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 自分のものかどうかを問わず、creepのいるマスも通行不可として扱う.
-                let creeps = room_obj.find(find::CREEPS, None);
-                // Avoid creeps in the room
-                for creep in creeps {
-                    cost_matrix.set(creep.pos().xy(), 0xff);
-
-                    // enemyの射程圏内は、Rampartが無い限りコストをあげる.
-                    if creep.my() == false {
-                        // 旧実装は match で上書きし続けていたため body の最後に現れた
-                        // 攻撃パーツが勝ち、[RangedAttack, Attack] の順だとレンジャーを
-                        // 射程1と誤認していた。最大値を採る。
-                        let enemy_range: i8 = creep
-                            .body()
-                            .iter()
-                            .filter(|bp| bp.hits() > 0)
-                            .map(|bp| match bp.part() {
-                                Part::RangedAttack => 3,
-                                Part::Attack => 1,
-                                _ => 0,
-                            })
-                            .max()
-                            .unwrap_or(1)
-                            .max(1);
-
-                        // 半径 r を中心に置くには 0..=2r を回して -r する。
-                        // 旧実装は enemy_range に 2r を入れた状態で 0..=2r を回して
-                        // -2r していたため、危険域が敵の左上にだけ広がり右下は
-                        // 完全にノーマークだった。
-                        let enemy_diameter = enemy_range * 2;
-                        let enemy_x = creep.pos().x().u8() as i8;
-                        let enemy_y = creep.pos().y().u8() as i8;
-
-                        for x_pos_offset in 0..=enemy_diameter {
-                            for y_pos_offset in 0..=enemy_diameter {
-                                let new_x_pos: i8 = min(
-                                    max(enemy_x + x_pos_offset - enemy_range, 0),
-                                    ROOM_SIZE_X as i8 - 1,
-                                );
-                                let new_y_pos: i8 = min(
-                                    max(enemy_y + y_pos_offset - enemy_range, 0),
-                                    ROOM_SIZE_Y as i8 - 1,
-                                );
-
-                                let new_xy = xy(new_x_pos as u8, new_y_pos as u8);
-                                let cur_cost = cost_matrix.get(new_xy);
-                                // すでに通行不可としてマークされているマスは触らない.
-                                if cur_cost < 0xff {
-                                    let has_my_rampart = room_obj
-                                        .look_for_at_xy(
-                                            look::STRUCTURES,
-                                            new_x_pos as u8,
-                                            new_y_pos as u8,
-                                        )
-                                        .iter()
-                                        .filter(|s| {
-                                            s.structure_type() == StructureType::Rampart
-                                                && s.as_owned()
-                                                    .map(|os| os.my())
-                                                    .unwrap_or(false)
-                                                    == true
-                                        })
-                                        .count()
-                                        > 0;
-
-                                    if room_obj.get_terrain().get(new_x_pos as u8, new_y_pos as u8)
-                                        != Terrain::Wall
-                                    {
-                                        if !has_my_rampart {
-                                            cost_matrix.set(new_xy, danger_cost(cur_cost));
-                                        }
-                                    } else if room_obj
-                                        .look_for_at_xy(
-                                            look::STRUCTURES,
-                                            new_x_pos as u8,
-                                            new_y_pos as u8,
-                                        )
-                                        .iter()
-                                        .filter(|s| s.structure_type() == StructureType::Road)
-                                        .count()
-                                        > 0
-                                    {
-                                        //Road かつ Wall.
-                                        if !has_my_rampart {
-                                            cost_matrix.set(new_xy, danger_cost(cur_cost));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            None => {
-                //デフォルトのまま.
-            }
-        }
-
+        if chk_struct.structure_type() == StructureType::Road {
+            is_road[idx] = true;
+            // Favor roads over plain tiles
+            cost_matrix.set(pos_xy, 1);
+        } else if chk_struct.structure_type() != StructureType::Container
+            && (chk_struct.structure_type() != StructureType::Rampart
+                || check_my_structure(chk_struct) == false)
         {
-            let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
-            cost_matrix_cache.insert(room_name, cost_matrix.clone());
+            // Can't walk through non-walkable buildings
+            cost_matrix.set(pos_xy, 0xff);
         }
     }
 
-    let room_cost_result = MultiRoomCostResult::CostMatrix(CostMatrix::from(cost_matrix));
-    return room_cost_result;
+    // ConstructionSiteの通行不可なものをマーク.
+    for construction_site in room_obj.find(find::MY_CONSTRUCTION_SITES, None) {
+        if construction_site.structure_type() != StructureType::Road
+            && construction_site.structure_type() != StructureType::Container
+            && construction_site.structure_type() != StructureType::Rampart
+        {
+            // Can't walk through non-walkable construction sites.
+            cost_matrix.set(construction_site.pos().xy(), 0xff);
+        }
+    }
+
+    // active sourceの周辺はコストをあげる (採取待ちで詰まりやすいため).
+    for chk_item in room_obj.find(find::SOURCES_ACTIVE, None).iter() {
+        let (sx, sy) = (chk_item.pos().x().u8() as i8, chk_item.pos().y().u8() as i8);
+
+        for dx in -1..=1i8 {
+            for dy in -1..=1i8 {
+                let nx = (sx + dx).clamp(0, ROOM_SIZE_X as i8 - 1) as u8;
+                let ny = (sy + dy).clamp(0, ROOM_SIZE_Y as i8 - 1) as u8;
+                let new_xy = xy(nx, ny);
+
+                // すでに通行不可としてマークされているマスは触らない.
+                if cost_matrix.get(new_xy) >= 0xff {
+                    continue;
+                }
+
+                if terrain.get_xy(new_xy) != Terrain::Wall {
+                    cost_matrix.set(new_xy, 11);
+                } else if is_road[xy_index(new_xy)] {
+                    //Road かつ Wall.
+                    cost_matrix.set(new_xy, 2);
+                }
+            }
+        }
+    }
+
+    {
+        let mut cache = MAP_CACHE.write().unwrap();
+        cache.insert(room_name, (now, cost_matrix.clone()));
+    }
+
+    cost_matrix
 }
+
+/// 動的層 (creep の位置と敵の危険域) を重ねる。
+fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut LocalCostMatrix) {
+    let terrain = room_terrain(room_obj);
+
+    // 自分のランパートの位置をビットマップ化。危険域の判定で使う。
+    let mut has_my_rampart = vec![false; ROOM_AREA];
+    let mut is_road = vec![false; ROOM_AREA];
+    for s in room_structures(room_obj).iter() {
+        let idx = xy_index(s.pos().xy());
+        match s.structure_type() {
+            StructureType::Rampart => {
+                if check_my_structure(s) {
+                    has_my_rampart[idx] = true;
+                }
+            }
+            StructureType::Road => is_road[idx] = true,
+            _ => {}
+        }
+    }
+
+    // 自分のものかどうかを問わず、creepのいるマスは通行不可として扱う.
+    for creep in room_obj.find(find::CREEPS, None) {
+        cost_matrix.set(creep.pos().xy(), 0xff);
+
+        // enemyの射程圏内は、Rampartが無い限りコストをあげる.
+        if creep.my() {
+            continue;
+        }
+
+        // 旧実装は match で上書きし続けていたため body の最後に現れた
+        // 攻撃パーツが勝ち、[RangedAttack, Attack] の順だとレンジャーを
+        // 射程1と誤認していた。最大値を採る。
+        let enemy_range: i8 = creep
+            .body()
+            .iter()
+            .filter(|bp| bp.hits() > 0)
+            .map(|bp| match bp.part() {
+                Part::RangedAttack => 3,
+                Part::Attack => 1,
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(1)
+            .max(1);
+
+        // 半径 r を中心に置くには -r..=r を回す。旧実装は 2r を入れた変数で
+        // 0..=2r を回して -2r していたため、危険域が敵の左上にだけ広がり
+        // 右下は完全にノーマークだった。
+        let (ex, ey) = (creep.pos().x().u8() as i8, creep.pos().y().u8() as i8);
+
+        for dx in -enemy_range..=enemy_range {
+            for dy in -enemy_range..=enemy_range {
+                let nx = (ex + dx).clamp(0, ROOM_SIZE_X as i8 - 1) as u8;
+                let ny = (ey + dy).clamp(0, ROOM_SIZE_Y as i8 - 1) as u8;
+                let new_xy = xy(nx, ny);
+                let idx = xy_index(new_xy);
+
+                let cur_cost = cost_matrix.get(new_xy);
+                // すでに通行不可としてマークされているマスは触らない.
+                if cur_cost >= 0xff {
+                    continue;
+                }
+                // 自分のランパートの下は安全なので上乗せしない。
+                if has_my_rampart[idx] {
+                    continue;
+                }
+
+                // 壁の上は道路があるときだけ通れる。
+                if terrain.get_xy(new_xy) == Terrain::Wall && !is_road[idx] {
+                    continue;
+                }
+
+                cost_matrix.set(new_xy, danger_cost(cur_cost));
+            }
+        }
+    }
+}
+
 
 pub fn check_walkable(position: &RoomPosition) -> bool {
     let chk_room = game::rooms().get(position.room_name());
@@ -889,11 +888,32 @@ fn live_tickcount_from_kind(
     None
 }
 
+/// 部屋の地形 (wasm 側にコピー済み) を tick 単位でキャッシュする。
+///
+/// `get_live_tickcount` は構造物1個ごとに `room.get_terrain()` を呼んでいた。
+/// 1500 構造物なら 1500 回の JS 呼び出し + オブジェクト生成になる。
+/// `LocalRoomTerrain` は 2500 バイトを wasm 線形メモリへ写すので、部屋あたり
+/// 1 回変換すれば以降の参照は JS 呼び出しゼロで済む。
+fn room_terrain(room: &screeps::objects::Room) -> Rc<LocalRoomTerrain> {
+    let name = room.name();
+
+    TERRAIN_CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().get(&name) {
+            return Rc::clone(cached);
+        }
+
+        let terrain: Rc<LocalRoomTerrain> = Rc::new(room.get_terrain().into());
+        cache.borrow_mut().insert(name, Rc::clone(&terrain));
+        terrain
+    })
+}
+
 pub fn get_live_tickcount(structure: &StructureObject) -> Option<u128> {
     let room_obj = structure
         .as_structure()
         .room()
         .expect("room is not visible to you");
+    let terrain = room_terrain(&room_obj);
 
     match structure.as_owned() {
         Some(my_structure) => {
@@ -903,9 +923,7 @@ pub fn get_live_tickcount(structure: &StructureObject) -> Option<u128> {
 
             match structure.as_attackable() {
                 Some(attackable) => {
-                    let this_terrain = room_obj
-                        .get_terrain()
-                        .get(structure.pos().x().u8(), structure.pos().y().u8());
+                    let this_terrain = terrain.get_xy(structure.pos().xy());
 
                     return live_tickcount_from_kind(structure, attackable.hits(), this_terrain);
                 }
@@ -919,9 +937,7 @@ pub fn get_live_tickcount(structure: &StructureObject) -> Option<u128> {
         None => {
             match structure.as_attackable() {
                 Some(attackable) => {
-                    let this_terrain = room_obj
-                        .get_terrain()
-                        .get(structure.pos().x().u8(), structure.pos().y().u8());
+                    let this_terrain = terrain.get_xy(structure.pos().xy());
 
                     return live_tickcount_from_kind(structure, attackable.hits(), this_terrain);
                 }

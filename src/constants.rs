@@ -14,3 +14,11 @@ pub const MARKET_FEE_BUDGET_RATIO: f64 = 0.1;
 
 /// 1回の買い注文に充ててよいクレジットの割合。
 pub const BUY_CREDIT_BUDGET_RATIO: f64 = 0.7;
+
+/// 値引きの上限 (割合)。散らばりが大きい資源でもこれ以上は引かない。
+/// 旧実装の「絶対値 0.5 引き」は安い資源で 80% 引きになっていた。
+pub const MARKET_MAX_DISCOUNT_RATIO: f64 = 0.15;
+
+/// 売り価格の下限。中央値に対するこの割合を下回る値付けはしない。
+/// 値下げを繰り返しても最終的にここで止まる。
+pub const SELL_PRICE_FLOOR_RATIO: f64 = 0.7;
