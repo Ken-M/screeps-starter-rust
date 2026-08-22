@@ -63,6 +63,29 @@ fn xy(x: u8, y: u8) -> RoomXY {
     RoomXY::checked_new(x, y).expect("coordinate out of range")
 }
 
+/// 敵の射程圏内のマスに危険度を上乗せする。
+///
+/// 旧実装は `cur_cost + 10` をそのまま代入していた。`cur_cost < 0xff` のガードしか
+/// ないため cur_cost が 246 以上だと u8 を越え、release ビルド (overflow-checks off)
+/// ではラップして「最も危険なマスが最も安いマス」に反転していた。
+/// 254 で頭打ちにする (255 は通行不可の予約値なので使わない)。
+fn danger_cost(cur_cost: u8) -> u8 {
+    cur_cost.saturating_add(10).min(254)
+}
+
+/// 指定座標に自分の Extractor があるか。
+/// 座標が属する部屋を引いてから look するので、他室のミネラルでも正しく判定できる。
+fn has_my_extractor_at(pos: Position) -> bool {
+    let Some(room) = game::rooms().get(pos.room_name()) else {
+        // 視界が無い部屋は判定できない。採取先として選ばない。
+        return false;
+    };
+
+    room.look_for_at_xy(look::STRUCTURES, pos.x().u8(), pos.y().u8())
+        .iter()
+        .any(|s| s.structure_type() == StructureType::Extractor && check_my_structure(s))
+}
+
 /// creep の現在室 + 見えている他室から `find` した結果を連結して返す.
 /// find 定数は Copy ではないためクロージャで都度生成する.
 fn find_all_rooms<T>(
@@ -199,6 +222,9 @@ pub fn calc_average(room_name: &RoomName) {
                 );
             } else {
                 construction_progress_average.insert(*room_name, 0);
+                // MIN 側にも入れないと、下の get_construction_progress_average が
+                // 常にキャッシュミス扱いになり calc_average を毎回呼び直してしまう。
+                construction_progress_min.insert(*room_name, 0);
             }
         }
 
@@ -263,7 +289,11 @@ pub fn get_construction_progress_average(room_name: &RoomName) -> (u128, u128) {
         let construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.read().unwrap();
         let cache_value = construction_progress_average.get(&room_name);
 
-        let construction_progress_min = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.read().unwrap();
+        // MIN キャッシュを読む。旧実装は2箇所とも AVERAGE を読んでおり、
+        // MIN キャッシュは書かれるだけの dead store になっていた。その結果
+        // builder の閾値 (stats.0 + stats.1) / 2 が「平均と最小の中間」ではなく
+        // 単なる平均になり、建設優先度の制御が設計どおり効いていなかった。
+        let construction_progress_min = CONSTRUCTION_PROGRESS_MIN_CACHE.read().unwrap();
         let cache_value_min = construction_progress_min.get(&room_name);
 
         match cache_value {
@@ -288,7 +318,11 @@ pub fn get_construction_progress_average(room_name: &RoomName) -> (u128, u128) {
         let construction_progress_average = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.read().unwrap();
         let cache_value = construction_progress_average.get(&room_name);
 
-        let construction_progress_min = CONSTRUCTION_PROGRESS_AVERAGE_CACHE.read().unwrap();
+        // MIN キャッシュを読む。旧実装は2箇所とも AVERAGE を読んでおり、
+        // MIN キャッシュは書かれるだけの dead store になっていた。その結果
+        // builder の閾値 (stats.0 + stats.1) / 2 が「平均と最小の中間」ではなく
+        // 単なる平均になり、建設優先度の制御が設計どおり効いていなかった。
+        let construction_progress_min = CONSTRUCTION_PROGRESS_MIN_CACHE.read().unwrap();
         let cache_value_min = construction_progress_min.get(&room_name);
 
         match cache_value {
@@ -413,40 +447,38 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult {
 
                     // enemyの射程圏内は、Rampartが無い限りコストをあげる.
                     if creep.my() == false {
-                        let mut enemy_range = 1;
+                        // 旧実装は match で上書きし続けていたため body の最後に現れた
+                        // 攻撃パーツが勝ち、[RangedAttack, Attack] の順だとレンジャーを
+                        // 射程1と誤認していた。最大値を採る。
+                        let enemy_range: i8 = creep
+                            .body()
+                            .iter()
+                            .filter(|bp| bp.hits() > 0)
+                            .map(|bp| match bp.part() {
+                                Part::RangedAttack => 3,
+                                Part::Attack => 1,
+                                _ => 0,
+                            })
+                            .max()
+                            .unwrap_or(1)
+                            .max(1);
 
-                        for body_part in creep.body() {
-                            if body_part.hits() > 0 {
-                                match body_part.part() {
-                                    Part::Attack => {
-                                        enemy_range = 1;
-                                    }
+                        // 半径 r を中心に置くには 0..=2r を回して -r する。
+                        // 旧実装は enemy_range に 2r を入れた状態で 0..=2r を回して
+                        // -2r していたため、危険域が敵の左上にだけ広がり右下は
+                        // 完全にノーマークだった。
+                        let enemy_diameter = enemy_range * 2;
+                        let enemy_x = creep.pos().x().u8() as i8;
+                        let enemy_y = creep.pos().y().u8() as i8;
 
-                                    Part::RangedAttack => {
-                                        enemy_range = 3;
-                                    }
-
-                                    _ => {}
-                                }
-                            }
-                        }
-
-                        enemy_range = enemy_range * 2;
-
-                        for x_pos_offset in 0..=enemy_range {
-                            for y_pos_offset in 0..=enemy_range {
+                        for x_pos_offset in 0..=enemy_diameter {
+                            for y_pos_offset in 0..=enemy_diameter {
                                 let new_x_pos: i8 = min(
-                                    max(
-                                        creep.pos().x().u8() as i8 + x_pos_offset - enemy_range,
-                                        0,
-                                    ),
+                                    max(enemy_x + x_pos_offset - enemy_range, 0),
                                     ROOM_SIZE_X as i8 - 1,
                                 );
                                 let new_y_pos: i8 = min(
-                                    max(
-                                        creep.pos().y().u8() as i8 + y_pos_offset - enemy_range,
-                                        0,
-                                    ),
+                                    max(enemy_y + y_pos_offset - enemy_range, 0),
                                     ROOM_SIZE_Y as i8 - 1,
                                 );
 
@@ -475,7 +507,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult {
                                         != Terrain::Wall
                                     {
                                         if !has_my_rampart {
-                                            cost_matrix.set(new_xy, cur_cost + 10);
+                                            cost_matrix.set(new_xy, danger_cost(cur_cost));
                                         }
                                     } else if room_obj
                                         .look_for_at_xy(
@@ -490,7 +522,7 @@ fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult {
                                     {
                                         //Road かつ Wall.
                                         if !has_my_rampart {
-                                            cost_matrix.set(new_xy, cur_cost + 10);
+                                            cost_matrix.set(new_xy, danger_cost(cur_cost));
                                         }
                                     }
                                 }
@@ -1293,24 +1325,11 @@ pub fn find_nearest_active_source(
             let item_list = find_all_rooms(creep, || find::MINERALS);
 
             for chk_item in item_list.iter() {
-                let look_result = creep.room().expect("I can't see").look_for_at_xy(
-                    look::STRUCTURES,
-                    chk_item.pos().x().u8(),
-                    chk_item.pos().y().u8(),
-                );
-
-                let mut is_extractor_equited = false;
-
-                for one_result in look_result {
-                    if one_result.structure_type() == StructureType::Extractor
-                        && check_my_structure(&one_result)
-                    {
-                        is_extractor_equited = true;
-                        break;
-                    }
-                }
-
-                if is_extractor_equited {
+                // ミネラルのある部屋を見る。旧実装は creep が今いる部屋を見ていたため、
+                // 他室のミネラル座標を自室で調べてしまい Extractor 判定が丸ごと誤って
+                // いた (自室にたまたま Extractor があると、Extractor の無い他室の
+                // ミネラルを採取先に選び、歩いて行って harvest に失敗し続ける)。
+                if has_my_extractor_at(chk_item.pos()) {
                     find_item_list.push((chk_item.pos(), 1));
                 }
             }
@@ -1459,24 +1478,11 @@ pub fn find_nearest_exhausted_source(
             let item_list = find_all_rooms(creep, || find::MINERALS);
 
             for chk_item in item_list.iter() {
-                let look_result = creep.room().expect("I can't see").look_for_at_xy(
-                    look::STRUCTURES,
-                    chk_item.pos().x().u8(),
-                    chk_item.pos().y().u8(),
-                );
-
-                let mut is_extractor_equited = false;
-
-                for one_result in look_result {
-                    if one_result.structure_type() == StructureType::Extractor
-                        && check_my_structure(&one_result)
-                    {
-                        is_extractor_equited = true;
-                        break;
-                    }
-                }
-
-                if is_extractor_equited {
+                // ミネラルのある部屋を見る。旧実装は creep が今いる部屋を見ていたため、
+                // 他室のミネラル座標を自室で調べてしまい Extractor 判定が丸ごと誤って
+                // いた (自室にたまたま Extractor があると、Extractor の無い他室の
+                // ミネラルを採取先に選び、歩いて行って harvest に失敗し続ける)。
+                if has_my_extractor_at(chk_item.pos()) {
                     find_item_list.push((chk_item.pos(), 1));
                 }
             }

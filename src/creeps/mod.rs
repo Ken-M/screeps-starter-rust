@@ -523,12 +523,22 @@ pub fn creep_loop() {
                                         path_search_result.path()
                                     );
 
-                                    let look_result =
-                                        creep.room().expect("I can't see").look_for_at_xy(
-                                            look::CREEPS,
-                                            defined_target_pos.x().u8(),
-                                            defined_target_pos.y().u8(),
-                                        );
+                                    // ターゲット座標のある部屋を見る。旧実装は creep が
+                                    // 今いる部屋を見ていたため、他室のターゲットに対して
+                                    // 自室の同じ座標を調べてしまい、誤検知 (自室にたまたま
+                                    // creep がいると「取られた」と誤判定) と検知漏れ
+                                    // (他室の本当のターゲット上の creep を見逃す) の
+                                    // 両方が起きていた。
+                                    let look_result = game::rooms()
+                                        .get(defined_target_pos.room_name())
+                                        .map(|target_room| {
+                                            target_room.look_for_at_xy(
+                                                look::CREEPS,
+                                                defined_target_pos.x().u8(),
+                                                defined_target_pos.y().u8(),
+                                            )
+                                        })
+                                        .unwrap_or_default();
 
                                     for one_result in look_result {
                                         if one_result.name() != creep.name() {
