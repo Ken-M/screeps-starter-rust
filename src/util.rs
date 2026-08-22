@@ -25,6 +25,9 @@ thread_local! {
     /// tick 内で共有する部屋ごとの建造物リスト。詳細は `room_structures()`。
     static ROOM_STRUCTURE_CACHE: RefCell<HashMap<RoomName, Rc<Vec<StructureObject>>>> =
         RefCell::new(HashMap::new());
+    /// tick 内で共有する部屋ごとの敵リスト。詳細は `room_hostiles()`。
+    static HOSTILE_CACHE: RefCell<HashMap<RoomName, Rc<Vec<screeps::objects::Creep>>>> =
+        RefCell::new(HashMap::new());
 }
 
 const ROOM_SIZE_X: u8 = 50;
@@ -70,6 +73,10 @@ pub fn move_by_search_result(
 /// 何もしないのに数万 ops を溶かしていた。
 /// 自分の現在地を範囲0のゴールにすると即座に (ops ほぼ0で) 空経路が返る。
 /// 呼び出し側は一律 `path().len() > 0` で判定しているので挙動も変わらない。
+pub fn empty_search_for(creep: &screeps::objects::Creep) -> SearchResults {
+    empty_search(creep)
+}
+
 fn empty_search(creep: &screeps::objects::Creep) -> SearchResults {
     search(creep.pos(), creep.pos(), 0, Some(default_search_options()))
 }
@@ -149,6 +156,24 @@ fn all_structures() -> Rc<Vec<StructureObject>> {
     })
 }
 
+/// 1部屋分の敵 creep リスト (tick 単位でキャッシュ)。
+///
+/// 旧実装は creep ごとに `find(HOSTILE_CREEPS)` を呼んでいた。敵の顔ぶれは tick 内で
+/// 変わらないので、部屋あたり1回で足りる。
+pub fn room_hostiles(room: &screeps::objects::Room) -> Rc<Vec<screeps::objects::Creep>> {
+    let name = room.name();
+
+    HOSTILE_CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().get(&name) {
+            return Rc::clone(cached);
+        }
+
+        let list = Rc::new(room.find(find::HOSTILE_CREEPS, None));
+        cache.borrow_mut().insert(name, Rc::clone(&list));
+        list
+    })
+}
+
 /// 1部屋分の建造物リスト (tick 単位でキャッシュ)。
 ///
 /// 「自室だけを見たい」呼び出し側 (tower の修理対象選び、harvester の補給先探し、
@@ -192,6 +217,7 @@ fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
 pub fn clear_init_flag() {
     STRUCTURE_CACHE.with(|cache| *cache.borrow_mut() = None);
     ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
+    HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());
 
     let mut cost_matrix_cache = MAP_CACHE.write().unwrap();
     cost_matrix_cache.clear();

@@ -21,6 +21,21 @@ enum AttackerKind {
     NONE,
 }
 
+/// 採取先が1つも見つからなかったとき、次に再探索するまで待つ tick 数。
+const HARVEST_RETRY_BACKOFF: u32 = 10;
+
+/// ターゲットの有効期限を経路長から決める。
+///
+/// 旧実装は 5〜20 の固定値だった。カウントダウンは移動中に毎tick減るが、
+/// 基本 body は MOVE 比 1/2 なので平地1マスに2tick かかる。storage 用の初期値 10 だと
+/// 5マス進むごとにフル再探索を払う計算になり、部屋の対角 (最大約70マス) には
+/// いつまでも到達できなかった。
+/// 経路長 × 2 に余裕を足した値にする。
+fn path_ttl(res: &SearchResults) -> i32 {
+    let steps = res.path().len() as i32;
+    (steps * 2 + 5).clamp(5, 200)
+}
+
 fn reset_source_target(
     creep: &Creep,
     is_harvester: bool,
@@ -40,7 +55,7 @@ fn reset_source_target(
             let last_pos = *(res.path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", 20);
+            creep.memory().set("target_pos_count", path_ttl(&res));
             creep.memory().set("will_harvest_from_storage", false);
             creep.memory().del("nothing_to_harvest");
 
@@ -60,7 +75,7 @@ fn reset_source_target(
                 let last_pos = *(res.path().last().unwrap());
                 let json_str = serde_json::to_string(&last_pos).unwrap();
                 creep.memory().set("target_pos", json_str);
-                creep.memory().set("target_pos_count", 10);
+                creep.memory().set("target_pos_count", path_ttl(&res));
                 creep.memory().set("will_harvest_from_storage", true);
                 creep.memory().del("nothing_to_harvest");
 
@@ -80,7 +95,7 @@ fn reset_source_target(
             let last_pos = *(res.path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", 20);
+            creep.memory().set("target_pos_count", path_ttl(&res));
             creep.memory().set("will_harvest_from_storage", true);
             creep.memory().del("nothing_to_harvest");
 
@@ -103,7 +118,7 @@ fn reset_source_target(
             let last_pos = *(res.path().last().unwrap());
             let json_str = serde_json::to_string(&last_pos).unwrap();
             creep.memory().set("target_pos", json_str);
-            creep.memory().set("target_pos_count", 10);
+            creep.memory().set("target_pos_count", path_ttl(&res));
             creep.memory().set("will_harvest_from_storage", false);
             creep.memory().del("nothing_to_harvest");
 
@@ -123,7 +138,7 @@ fn reset_source_target(
         let last_pos = *(res.path().last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
         creep.memory().set("target_pos", json_str);
-        creep.memory().set("target_pos_count", 5);
+        creep.memory().set("target_pos_count", path_ttl(&res));
         creep.memory().set("will_harvest_from_storage", true);
         creep.memory().del("nothing_to_harvest");
 
@@ -135,61 +150,69 @@ fn reset_source_target(
         return (res, last_pos);
     }
 
-    //全部ダメならとりあえずその場待機.
+    // 全部ダメならその場待機。
+    //
+    // 旧実装はここで「自分の現在地への経路探索」という無意味なコストを払い、
+    // 次tickも同じフル再探索 (全室スキャン6回 + 経路探索3回) を無限に繰り返して
+    // いた。採取先が無い状況は数tickで変わらないので、しばらく探索を止める。
     creep.memory().set("nothing_to_harvest", true);
-    let res = find_path(&creep, &creep.pos(), 0);
-    return (res, creep.pos().clone());
+    creep.memory().set(
+        "harvest_retry_at",
+        (game::time() + HARVEST_RETRY_BACKOFF) as i32,
+    );
+    return (empty_search_for(&creep), creep.pos());
 }
 
+/// 攻撃パーツを持つ creep の戦闘処理。
+///
+/// 戻り値は「この tick の移動を消費したか」。Screeps は 1 tick に attack と transfer と
+/// move を同時に発行できるので、攻撃しただけなら経済の仕事も続けてよい。
+///
+/// 旧実装は攻撃が成功した時点で true を返し、呼び出し側が `continue` で creep の仕事を
+/// 丸ごと飛ばしていた。spawn は creep 総数の 1/3 に攻撃パーツを配るので、偵察目的の敵が
+/// 1体入ってくるだけで艦隊の大半が採取も建設も止めていた。
+/// さらに採取ステートマシンが使う `target_pos` に敵座標を、`harvesting` に true を
+/// 書き込んで状態を壊していたため、敵が消えた次の tick に「敵がいた座標を採取ターゲット
+/// として扱う」無駄な往復が起きていた。攻撃用のキーは分離する。
 fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     debug!("check enemies {}", creep.name());
-    let enemies = creep
-        .room()
-        .expect("room is not visible to you")
-        .find(find::HOSTILE_CREEPS, None);
+    let room = creep.room().expect("room is not visible to you");
+    let enemies = room_hostiles(&room);
 
-    if enemies.len() == 0 {
+    if enemies.is_empty() {
+        creep.memory().del("attack_target_pos");
         return false;
     }
 
-    for enemy in enemies {
-        debug!("try attack enemy {}", creep.name());
+    // 射程内の敵がいれば撃つ。移動は消費しない。
+    let mut attacked = false;
+    for enemy in enemies.iter() {
+        let r = match kind {
+            AttackerKind::SHORT => creep.attack(enemy).is_ok(),
+            AttackerKind::RANGED => creep.ranged_attack(enemy).is_ok(),
+            AttackerKind::NONE => false,
+        };
 
-        match kind {
-            AttackerKind::SHORT => {
-                let r = creep.attack(&enemy);
-
-                if r.is_ok() {
-                    info!("attack to enemy!!");
-                    return true;
-                }
-            }
-
-            AttackerKind::RANGED => {
-                let r = creep.ranged_attack(&enemy);
-
-                if r.is_ok() {
-                    info!("attack to enemy!!");
-                    return true;
-                }
-            }
-
-            _ => {}
+        if r {
+            info!("attack to enemy!!");
+            attacked = true;
+            break;
         }
     }
 
-    let mut range: u32 = 1;
-    match kind {
-        AttackerKind::SHORT => {
-            range = 1;
-        }
-
-        AttackerKind::RANGED => {
-            range = 2;
-        }
-
-        _ => {}
+    if attacked {
+        // 撃てたなら近づく必要はない。移動は経済側に譲る。
+        return false;
     }
+
+    // 射程外なので接近する。ここで初めて移動を消費する。
+    // RANGED の射程は 3。旧実装は 2 を指定しており、わざわざ近接圏まで
+    // 踏み込みに行っていた。
+    let range: u32 = match kind {
+        AttackerKind::SHORT => 1,
+        AttackerKind::RANGED => 3,
+        AttackerKind::NONE => 1,
+    };
 
     let res = find_nearest_enemy(&creep, range);
     debug!("go to:{:?}", res.path());
@@ -197,9 +220,8 @@ fn attacker_routine(creep: &Creep, kind: &AttackerKind) -> bool {
     if res.path().len() > 0 {
         let last_pos = *(res.path().last().unwrap());
         let json_str = serde_json::to_string(&last_pos).unwrap();
-        creep.memory().set("target_pos", json_str);
-        creep.memory().set("target_pos_count", 5);
-        creep.memory().set("harvesting", true);
+        // 採取用の target_pos とは別のキーに書く。
+        creep.memory().set("attack_target_pos", json_str);
 
         let move_result = move_by_search_result(&creep, &res);
         if move_result.is_ok() {
@@ -431,10 +453,11 @@ pub fn creep_loop() {
         }
 
         //// atacker check.
+        // 戻り値は「移動を消費したか」。攻撃しただけなら経済の仕事も続ける。
         if attacker_kind != AttackerKind::NONE {
-            let result = attacker_routine(&creep, &attacker_kind);
+            let moved_to_enemy = attacker_routine(&creep, &attacker_kind);
 
-            if result == true {
+            if moved_to_enemy {
                 continue;
             }
         }
@@ -495,6 +518,22 @@ pub fn creep_loop() {
                 creep.memory().del("harvested_from_link");
                 creep.memory().del("nothing_to_harvest");
             }
+        }
+
+        // 採取先が無いと分かった直後は、再探索を数tick止める。
+        // 探索はフルで走ると全室スキャン6回 + 経路探索3回に達するため、
+        // 状況が変わらないうちに毎tick繰り返すのは純粋な浪費になる。
+        if creep.memory().bool("harvesting") && creep.memory().bool("nothing_to_harvest") {
+            let retry_at = creep
+                .memory()
+                .i32("harvest_retry_at")
+                .unwrap_or(Some(0))
+                .unwrap_or(0);
+            if (game::time() as i32) < retry_at {
+                debug!("{} waiting for harvest retry at {}", name, retry_at);
+                continue;
+            }
+            creep.memory().del("harvest_retry_at");
         }
 
         if creep.memory().bool("harvesting") {

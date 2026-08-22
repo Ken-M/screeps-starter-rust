@@ -10,6 +10,10 @@ use screeps::{find, game, Part, ResourceType, StructureType};
 
 const MAX_NUM_OF_CREEPS: u32 = 14;
 
+/// この体数を割ったら、body の大きさを待たずに最小構成でも即座に生産する。
+/// 「大きい creep を待つ」判断は、艦隊に余裕があるときだけ許される。
+const EMERGENCY_CREEP_FLOOR: i32 = 4;
+
 /// セーフモードを張るかを判定して、必要なら発動する。
 ///
 /// 旧実装は「spawnのHPが満タンでない」「creep数が上限の1/3未満」「攻撃パーツ持ちが0」
@@ -197,13 +201,24 @@ pub fn do_spawn() {
         );
 
         info!("min basic body set:{:?}", min_basic_body_set);
-        if ((cap_worker_carry as f64 * CAP_WORKER_CARRY_COEFF)
-            >= (body_cost as f64 * min_basic_body_set as f64))
-            && (extention_cap as f64 >= (body_cost as f64 * min_basic_body_set as f64))
+
+        // 「大きい body が組めるまでエネルギーを貯めて待つ」ゲート。
+        //
+        // 旧実装は外側に恒真の if を被せていた (切り捨てた商を掛け戻すので必ず両辺以下)
+        // ため、実質「sum_energy が閾値未満なら生産しない」だけだった。定常状態では
+        // cap_worker_carry が 1000 を超えるので 1500 エネルギー貯まるまで生産が止まり、
+        // creep が死んで数が減っている最中ほど収入が落ちて閾値に届かなくなる、という
+        // 負のスパイラルに入り得た。
+        //
+        // creep が安全下限を割っているときは待たず、最小構成でもすぐ出す。
+        if (num_total_creep >= EMERGENCY_CREEP_FLOOR)
+            && (sum_energy < body_cost * min_basic_body_set)
         {
-            if sum_energy < body_cost * min_basic_body_set {
-                continue;
-            }
+            info!(
+                "waiting for {} energy to build a full-size creep",
+                body_cost * min_basic_body_set
+            );
+            continue;
         }
 
         // とりあえず基本セットをつける.
