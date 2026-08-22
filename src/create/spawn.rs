@@ -6,6 +6,7 @@ use log::*;
 use screeps::action_error_codes::SpawnCreepErrorCode;
 use screeps::enums::StructureObject;
 use screeps::prelude::*;
+use screeps::objects::SpawnOptions;
 use screeps::{find, game, Part, ResourceType, StructureType};
 
 const MAX_NUM_OF_CREEPS: u32 = 14;
@@ -113,8 +114,59 @@ fn check_safe_mode(spawn: &screeps::objects::StructureSpawn) {
     }
 }
 
+
+/// ロールに合わせた body を組む。
+///
+/// 旧実装は全 creep に同じ汎用構成 (MOVE/MOVE/CARRY/WORK の繰り返し) を配っていた。
+/// 静的採掘者は動かないので MOVE は1個で足り、その分を WORK に回せる。運搬者は
+/// 掘らないので WORK が要らず、CARRY と MOVE だけ積める。同じエネルギーで
+/// 仕事量が大きく変わる。
+fn build_body(role: &str, energy: u32) -> Vec<Part> {
+    match role {
+        crate::creeps::ROLE_MINER => {
+            // 動かないので MOVE は1個。CARRY 1個は container へ移すため。
+            // WORK 5個で毎tick 10エネルギー = source の再生速度と一致するので、
+            // それ以上積んでも無駄になる。
+            let mut body = vec![Part::Move, Part::Carry];
+            let mut left = energy.saturating_sub(Part::Move.cost() + Part::Carry.cost());
+            while body.len() < screeps::constants::MAX_CREEP_SIZE as usize
+                && body.iter().filter(|p| **p == Part::Work).count() < 5
+                && left >= Part::Work.cost()
+            {
+                body.push(Part::Work);
+                left -= Part::Work.cost();
+            }
+            // WORK が1個も積めないなら採掘者として成立しない。
+            if body.iter().any(|p| *p == Part::Work) {
+                body
+            } else {
+                Vec::new()
+            }
+        }
+
+        crate::creeps::ROLE_HAULER | crate::creeps::ROLE_CARRIER_MINERAL => {
+            // 掘らないので CARRY と MOVE だけ。平地で満載でも全速が出る 1:1。
+            let unit = [Part::Carry, Part::Move];
+            let unit_cost: u32 = unit.iter().map(|p| p.cost()).sum();
+            let mut body = Vec::new();
+            let mut left = energy;
+            while body.len() + unit.len() <= screeps::constants::MAX_CREEP_SIZE as usize
+                && left >= unit_cost
+            {
+                body.extend(unit.iter().cloned());
+                left -= unit_cost;
+            }
+            body
+        }
+
+        // それ以外は従来どおりの汎用構成。呼び出し側が組む。
+        _ => Vec::new(),
+    }
+}
+
 pub fn do_spawn() {
-    let num_total_creep = game::creeps().values().count() as i32;
+    let colony = crate::creeps::ColonyState::observe();
+    let num_total_creep = colony.total_creeps;
 
     if num_total_creep >= MAX_NUM_OF_CREEPS as i32 {
         return;
@@ -194,6 +246,7 @@ pub fn do_spawn() {
 
         let mut body = Vec::new();
 
+        let available_energy = sum_energy;
         debug!("spawn calc sum_energy:{:?}", sum_energy);
         let min_basic_body_set = std::cmp::min(
             ((cap_worker_carry as f64 * CAP_WORKER_CARRY_COEFF) / (body_cost as f64)) as u32,
@@ -310,14 +363,32 @@ pub fn do_spawn() {
             set_num -= 1;
         }
 
-        if body.len() > 0 {
+        // 最も不足しているロールを先に決め、それに合う body を組む。
+        // 専用 body が無いロール (汎用作業者など) は上で組んだ body を使う。
+        let role = crate::creeps::most_needed_role(&colony);
+        // 専用 body の予算は、今この tick に実際に使えるエネルギー。
+        let specialized = build_body(role, available_energy);
+        let body = if specialized.is_empty() { body } else { specialized };
+
+        if !body.is_empty() {
             // create a unique name, spawn.
             let name_base = game::time();
             let mut additional = 0;
             let res = loop {
                 let name = format!("{}-{}", name_base, additional);
-                debug!("try spawn {:?}", body);
-                let res = spawn.spawn_creep(&body, &name);
+                debug!("try spawn {:?} as {}", body, role);
+
+                // ロールを生成時に書き込む。creep_loop 側の割り当てを待たずに
+                // 最初の tick から意図した仕事に就ける。
+                let mem = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &mem,
+                    &wasm_bindgen::JsValue::from_str("role"),
+                    &wasm_bindgen::JsValue::from_str(role),
+                );
+                let opts = SpawnOptions::new().memory(mem.into());
+
+                let res = spawn.spawn_creep_with_options(&body, &name, &opts);
 
                 if res == Err(SpawnCreepErrorCode::NameExists) {
                     additional += 1;
@@ -331,7 +402,7 @@ pub fn do_spawn() {
                     info!("couldn't spawn: {:?}", e);
                 }
                 Ok(()) => {
-                    info!("spawn: {:?}", body);
+                    info!("spawn {} as {:?}", role, body);
                 }
             }
         }

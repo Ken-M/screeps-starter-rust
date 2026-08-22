@@ -7,17 +7,10 @@ use screeps::action_error_codes::CreepRepairErrorCode;
 use screeps::prelude::*;
 use screeps::{find, Creep};
 
-use crate::creeps::upgrader::*;
-
-pub fn run_repairer(creep: &Creep) {
+/// 修理する。仕事が無いときの委譲は呼び出し側 (worker) が持つ。
+pub fn run_repairer_task(creep: &Creep) {
     let name = creep.name();
-    info!("running repairer {}", creep.name());
-
-    // 修理対象が1つも無いなら、構造物の全走査も探索もせずに委譲する。
-    if !work_summary().has_repair_target {
-        run_upgrader(creep);
-        return;
-    }
+    info!("repairing {}", creep.name());
 
     debug!("check spawns {}", name);
     let my_spawns = &creep
@@ -124,5 +117,4 @@ pub fn run_repairer(creep: &Creep) {
         return;
     }
 
-    run_upgrader(creep);
 }

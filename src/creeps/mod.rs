@@ -1,5 +1,8 @@
 mod builder;
 mod harvester;
+mod hauler;
+mod miner;
+mod worker;
 mod repairer;
 mod upgrader;
 
@@ -25,13 +28,15 @@ enum AttackerKind {
 /// 採取先が1つも見つからなかったとき、次に再探索するまで待つ tick 数。
 const HARVEST_RETRY_BACKOFF: u32 = 10;
 
-const ROLE_HARVESTER: &str = "harvester";
-const ROLE_HARVESTER_SPAWN: &str = "harvester_spawn";
-const ROLE_HARVESTER_MINERAL: &str = "harvester_mineral";
-const ROLE_CARRIER_MINERAL: &str = "carrier_mineral";
-const ROLE_BUILDER: &str = "builder";
-const ROLE_UPGRADER: &str = "upgrader";
-const ROLE_REPAIRER: &str = "repairer";
+pub const ROLE_MINER: &str = "miner";
+pub const ROLE_HAULER: &str = "hauler";
+pub const ROLE_HARVESTER: &str = "harvester";
+pub const ROLE_HARVESTER_SPAWN: &str = "harvester_spawn";
+pub const ROLE_HARVESTER_MINERAL: &str = "harvester_mineral";
+pub const ROLE_CARRIER_MINERAL: &str = "carrier_mineral";
+/// 建設・修理・アップグレードを兼ねる余剰労働力。
+/// 旧実装の builder / upgrader / repairer を統合したもの。
+pub const ROLE_WORKER: &str = "worker";
 
 /// 1 tick に配置転換してよい creep の数。
 /// 一度に動かすとハンチングするので少しずつ寄せる。
@@ -51,6 +56,11 @@ pub struct ColonyState {
     pub total_creeps: i32,
     /// ターミナルを持っているか (鉱物の搬出先)。
     pub has_terminal: bool,
+    /// 隣に container が完成している source の数。
+    ///
+    /// 静的採掘者はこの container に住み着いて掘り続ける。container が無い source に
+    /// 置いても降ろす先が無いので、その source には採掘者を割り当てない。
+    pub sources_with_container: i32,
     /// Extractor を持っているか。
     ///
     /// 鉱物採取には Extractor (RCL6) が要る。旧実装は creep 総数だけで
@@ -64,15 +74,29 @@ impl ColonyState {
         let mut has_terminal = false;
         let mut has_extractor = false;
 
+        let mut sources_with_container = 0;
+
         for room in game::rooms().values() {
             if room.terminal().is_some() {
                 has_terminal = true;
             }
-            if room_structures(&room)
+
+            let structures = room_structures(&room);
+            if structures
                 .iter()
                 .any(|s| s.structure_type() == screeps::StructureType::Extractor)
             {
                 has_extractor = true;
+            }
+
+            for source in room.find(find::SOURCES, None) {
+                let has_container = structures.iter().any(|s| {
+                    s.structure_type() == screeps::StructureType::Container
+                        && s.pos().is_near_to(source.pos())
+                });
+                if has_container {
+                    sources_with_container += 1;
+                }
             }
         }
 
@@ -80,24 +104,32 @@ impl ColonyState {
             total_creeps: game::creeps().values().count() as i32,
             has_terminal,
             has_extractor,
+            sources_with_container,
         }
     }
 }
 
-fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
+pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
     let total = state.total_creeps;
     let has_terminal = state.has_terminal;
     let has_extractor = state.has_extractor;
     let t = total.max(1);
 
     vec![
+        // 静的採掘者。container のある source に1体ずつ。
+        // WORK 5個で source の再生速度と釣り合うので、それ以上は要らない。
+        (ROLE_MINER, state.sources_with_container),
         // spawn/extension への補給は最優先。ここが切れると何も回らない。
         (ROLE_HARVESTER_SPAWN, std::cmp::min(3, t)),
-        // 採取本体。全体の3割を目安に、最低2体は確保する。
+        // 運搬者。採掘者が掘った分を運ぶ。採掘者がいて初めて意味を持つ。
+        // 往復距離が長い部屋ほど多く要るが、まずは採掘者と同数から。
+        (ROLE_HAULER, state.sources_with_container),
+        // 採取本体。採掘者が立ち上がるまでの主力で、立ち上がった後も
+        // container の無い source を拾う。
         (ROLE_HARVESTER, std::cmp::max(2, t * 3 / 10)),
-        (ROLE_UPGRADER, t / 10 + 1),
-        (ROLE_BUILDER, t / 6),
-        (ROLE_REPAIRER, t / 6),
+        // 余剰労働力。内訳 (建設 / 修理 / アップグレード) はその時の仕事の
+        // 有無で自動的に決まるので、ここでは総量だけを決める。
+        (ROLE_WORKER, std::cmp::max(1, t * 4 / 10)),
         // 鉱物系は Extractor があって初めて成立する。無い部屋で割り当てても
         // 採取先が存在せず、その creep は待機し続けるだけになる。
         (
@@ -109,6 +141,29 @@ fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
             if has_extractor && has_terminal && t > 10 { 1 } else { 0 },
         ),
     ]
+}
+
+/// 今いちばん不足しているロール。生産する body を決めるのに使う。
+///
+/// 旧実装は creep を作ってから creep_loop がロールを割り当てていたため、
+/// body は常に同じ汎用構成 (MOVE/MOVE/CARRY/WORK の繰り返し) だった。
+/// 静的採掘者は WORK 偏重、運搬者は CARRY 偏重が正解なので、
+/// 生産時点でロールを決めて body を合わせる。
+pub fn most_needed_role(state: &ColonyState) -> &'static str {
+    let mut counts: HashMap<String, i32> = HashMap::new();
+    for creep in game::creeps().values() {
+        if let Ok(Some(role)) = creep.memory().string("role") {
+            *counts.entry(role).or_insert(0) += 1;
+        }
+    }
+
+    for (role, target) in role_targets(state) {
+        if counts.get(role).copied().unwrap_or(0) < target {
+            return role;
+        }
+    }
+
+    ROLE_WORKER
 }
 
 /// この creep がそのロールをこなせる body を持っているか。
@@ -131,7 +186,9 @@ fn can_fill_role(creep: &Creep, role: &str) -> bool {
 
     match role {
         // 運搬だけなので CARRY があればよい。
-        ROLE_CARRIER_MINERAL => carry > 0,
+        ROLE_CARRIER_MINERAL | ROLE_HAULER => carry > 0,
+        // 静的採掘者は掘って隣の container に移すだけ。
+        ROLE_MINER => work > 0,
         // 採取・建設・修理・アップグレードには WORK と CARRY の両方が要る。
         _ => work > 0 && carry > 0,
     }
@@ -1060,6 +1117,14 @@ pub fn creep_loop() {
             }
 
             match role_string.as_str() {
+                "miner" => {
+                    miner::run_miner(&creep);
+                }
+
+                "hauler" => {
+                    hauler::run_hauler(&creep);
+                }
+
                 "harvester" => {
                     harvester::run_harvester(&creep);
                 }
@@ -1076,16 +1141,13 @@ pub fn creep_loop() {
                     harvester::run_carrier_mineral(&creep);
                 }
 
-                "builder" => {
-                    builder::run_builder(&creep);
+                "worker" => {
+                    worker::run_worker(&creep);
                 }
 
-                "upgrader" => {
-                    upgrader::run_upgrader(&creep);
-                }
-
-                "repairer" => {
-                    repairer::run_repairer(&creep);
+                // 旧ロール名。生きている creep が持っている間は worker として扱う。
+                "builder" | "upgrader" | "repairer" => {
+                    worker::run_worker(&creep);
                 }
 
                 "attacker" => {}
@@ -1104,13 +1166,12 @@ pub fn creep_loop() {
     // check number of each type creeps.
     let root = mem::root();
     let n = |role: &str| role_counts.get(role).copied().unwrap_or(0);
-    root.set("num_upgrader", n(ROLE_UPGRADER));
-    root.set("num_builder", n(ROLE_BUILDER));
+    root.set("num_worker", n(ROLE_WORKER));
     root.set("num_harvester", n(ROLE_HARVESTER));
     root.set("num_harvester_spawn", n(ROLE_HARVESTER_SPAWN));
     root.set("num_harvester_mineral", n(ROLE_HARVESTER_MINERAL));
     root.set("num_carrier_mineral", n(ROLE_CARRIER_MINERAL));
-    root.set("num_repairer", n(ROLE_REPAIRER));
+
 
     root.set("opt_num_attackable_short", opt_num_attackable_short);
     root.set("opt_num_attackable_long", opt_num_attackable_long);

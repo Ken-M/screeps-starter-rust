@@ -5,7 +5,7 @@ use screeps::prelude::*;
 use screeps::{find, Creep, ResourceType, StructureType};
 use std::cmp::*;
 
-use crate::creeps::builder::*;
+use crate::creeps::worker;
 
 pub fn run_harvester(creep: &Creep) {
     let name = creep.name();
@@ -166,7 +166,8 @@ pub fn run_harvester(creep: &Creep) {
         info!("couldn't move to transfer: {:?}", res);
     }
 
-    run_builder(creep);
+    // 配達先が無いときは余剰労働力として働く。
+    worker::run_worker(creep);
 }
 
 pub fn run_harvester_spawn(creep: &Creep) {
