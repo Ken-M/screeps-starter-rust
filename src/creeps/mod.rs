@@ -29,8 +29,12 @@ enum AttackerKind {
 const HARVEST_RETRY_BACKOFF: u32 = 10;
 
 /// この tick 数連続で動けなかったらスタックとみなす。
-/// 1 tick は正常な待ち (fatigue や順番待ち) でも起きるので 2 から。
-const STUCK_THRESHOLD: i32 = 2;
+///
+/// 当初は2にしていたが、一列で移動中に前の creep を数tick待つのは正常な渋滞で、
+/// それが全部スタック判定されてフル再探索 (全室スキャン + 経路探索3回) が
+/// 毎tick走り、creeps 区間の CPU が倍増した。本物の千日手 (押し合い) だけを
+/// 拾えるよう長めに取る。
+const STUCK_THRESHOLD: i32 = 5;
 
 pub const ROLE_MINER: &str = "miner";
 pub const ROLE_HAULER: &str = "hauler";
@@ -844,6 +848,9 @@ pub fn creep_loop() {
             }
             cmem.del("target_pos");
             cmem.del("target_pos_count");
+            // カウンタを戻す。戻さないと、依然動けない間このフル再探索が
+            // 毎tick繰り返されて CPU を溶かす。次の発火は THRESHOLD tick 後。
+            cmem.set("stuck_ticks", 0);
             set_hard_block_my_creeps(true);
         }
 
