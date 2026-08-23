@@ -33,6 +33,7 @@ enum AttackerKind {
 pub const ROLE_MINER: &str = "miner";
 pub const ROLE_HAULER: &str = "hauler";
 pub const ROLE_WORKER: &str = "worker";
+pub const ROLE_UPGRADER: &str = "upgrader";
 pub const ROLE_DEFENDER: &str = "defender";
 pub const ROLE_HARVESTER_MINERAL: &str = "harvester_mineral";
 pub const ROLE_CARRIER_MINERAL: &str = "carrier_mineral";
@@ -45,6 +46,11 @@ const ROLE_REBALANCE_PER_TICK: i32 = 1;
 /// spawn 所要 (7パーツ×3=21tick) + 職場までの歩行 (この部屋で最大約50tick、
 /// miner は MOVE 1 なので4倍遅い) + 余裕。
 pub const MINER_PRESPAWN_LEAD: u32 = 250;
+
+/// 部屋の道路がこの本数以上なら「道路網あり」とみなす。
+/// 幹線 (spawn⇄source⇄controller) の舗装がおおむね完了する本数。
+/// body の MOVE 比率の切り替えと hauler の目標数に使う。
+pub const ROAD_NETWORK_MIN: usize = 20;
 
 /// 滞留エネルギーがこの量を超えるごとに worker を1体追加する。
 /// worker 1体 (WORK 2 前後) が寿命 1500 tick で消費できる量の目安より
@@ -74,6 +80,12 @@ pub struct ColonyState {
     /// spawn / extension は生産用の備蓄なので数えない。
     /// worker の増員判断に使う: 採取が消費を上回っている間はここが積み上がる。
     pub energy_backlog: i32,
+    /// 道路網 (幹線舗装) が完成しているか。body の MOVE 比率と
+    /// hauler の目標数 (少数大型化) の切り替えに使う。
+    pub has_road_network: bool,
+    /// controller 脇の補給 container があるか。専任 upgrader
+    /// (座って WORK 全振り) はこれが前提。
+    pub has_controller_stock: bool,
 }
 
 thread_local! {
@@ -107,6 +119,8 @@ impl ColonyState {
         let mut total_sources = 0;
         let mut hostiles_present = false;
         let mut energy_backlog = 0;
+        let mut total_roads = 0usize;
+        let mut has_controller_stock = false;
 
         for room in game::rooms().values() {
             if room.terminal().is_some() {
@@ -116,12 +130,16 @@ impl ColonyState {
             for structure in room_structures(&room).iter() {
                 match structure.structure_type() {
                     screeps::StructureType::Extractor => has_extractor = true,
+                    screeps::StructureType::Road => total_roads += 1,
                     screeps::StructureType::Container | screeps::StructureType::Storage => {
                         if let Some(store) = structure.as_has_store() {
                             energy_backlog += store
                                 .store()
                                 .get_used_capacity(Some(screeps::ResourceType::Energy))
                                 as i32;
+                        }
+                        if is_controller_stock(structure) {
+                            has_controller_stock = true;
                         }
                     }
                     _ => {}
@@ -180,6 +198,8 @@ impl ColonyState {
             num_miners,
             num_haulers,
             energy_backlog,
+            has_road_network: total_roads >= ROAD_NETWORK_MIN,
+            has_controller_stock,
         }
     }
 }
@@ -209,14 +229,34 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
         // 静的採掘者。source に1体ずつ + 寿命が近い個体の後継。
         // WORK 5個で source の再生速度と釣り合うので、1 source 1体で足りる。
         (ROLE_MINER, state.total_sources + state.miners_expiring),
-        // 運搬。source からの搬出2系統 + 拠点内の補給に1〜2体。
-        (ROLE_HAULER, state.total_sources + 2),
-        // 余剰労働力 (建設・修理・アップグレード)。
-        // 基本数 + エネルギーが滞留しているぶんの増員。増員分は主に
-        // アップグレードへ流れる (建設サイトが無ければ worker は upgrade する)。
+        // 運搬。source からの搬出2系統 + 拠点内の補給。
+        // 道路網が完成すると body が CARRY2:MOVE1 の大型になるので、
+        // 同じ輸送量を少ない体数で運べる (spawn 予算と CPU の節約)。
+        (
+            ROLE_HAULER,
+            state.total_sources + if state.has_road_network { 1 } else { 2 },
+        ),
+        // 専任アップグレード係。controller 脇の補給 container の隣に座り、
+        // withdraw と upgrade を同 tick に併用して WORK 全振り body を回す。
+        // container が無いうちは 0 (worker の名前パリティ傾斜が代替)。
+        (
+            ROLE_UPGRADER,
+            if state.has_controller_stock {
+                state.total_sources + surplus_workers(state)
+            } else {
+                0
+            },
+        ),
+        // 汎用労働力 (建設・修理、暇ならアップグレード)。
+        // 専任 upgrader が立っている間はその分を差し引く。
+        // 合計は従来の sources*2 + 1 + 増員 と同じに保つ。
         (
             ROLE_WORKER,
-            state.total_sources * 2 + 1 + surplus_workers(state),
+            if state.has_controller_stock {
+                state.total_sources + 1
+            } else {
+                state.total_sources * 2 + 1 + surplus_workers(state)
+            },
         ),
         // 鉱物系は Extractor (RCL6) があって初めて成立する。
         // 注意: 旧世代の採取ステートマシン退役に伴い、鉱物の採取側は
@@ -466,9 +506,10 @@ pub fn creep_loop() {
     // 固定アップグレード係を1体維持する。建設が続いても controller の進捗が
     // 完全には止まらないようにする。Memory フラグで粘着させる (tick ごとに
     // 指名が移ると、controller までの道中で指名が外れて誰も到着しない)。
-    let duty_alive = roster
-        .iter()
-        .any(|i| i.role == ROLE_WORKER && i.creep.memory().bool(crate::mem::keys::UPGRADE_DUTY));
+    let duty_alive = roster.iter().any(|i| {
+        i.role == ROLE_UPGRADER
+            || (i.role == ROLE_WORKER && i.creep.memory().bool(crate::mem::keys::UPGRADE_DUTY))
+    });
     if !duty_alive {
         if let Some(candidate) = roster.iter().find(|i| i.role == ROLE_WORKER) {
             info!("{} takes upgrade duty", candidate.name);
@@ -507,6 +548,7 @@ pub fn creep_loop() {
             "worker" => {
                 worker::run_worker(creep, creep.memory().bool(crate::mem::keys::UPGRADE_DUTY));
             }
+            "upgrader" => upgrader::run_dedicated_upgrader(creep),
 
             // 鉱物系: 旧採取ステートマシンの退役により採取側が未実装。
             // Extractor 解禁 (RCL6) までに専用実装を入れる。それまでは
@@ -547,7 +589,43 @@ mod tests {
             num_miners: 0,
             num_haulers: 0,
             energy_backlog: 0,
+            has_road_network: false,
+            has_controller_stock: false,
         }
+    }
+
+    fn target_of(st: &ColonyState, role: &str) -> i32 {
+        role_targets(st).iter().find(|(n, _)| *n == role).unwrap().1
+    }
+
+    #[test]
+    fn 補給containerがあればupgrader専任が立ち_総数は変わらない() {
+        let mut st = state(2, false, 0);
+        let base_total = total_role_target(&st);
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 0);
+
+        st.has_controller_stock = true;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 2);
+        assert_eq!(target_of(&st, ROLE_WORKER), 3);
+        // worker から振り替えるだけで人口は増やさない。
+        assert_eq!(total_role_target(&st), base_total);
+    }
+
+    #[test]
+    fn 余剰エネルギーの増員は専任upgraderに乗る() {
+        let mut st = state(2, false, 0);
+        st.has_controller_stock = true;
+        let base = target_of(&st, ROLE_UPGRADER);
+        st.energy_backlog = WORKER_SURPLUS_ENERGY_STEP * 2;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), base + 2);
+    }
+
+    #[test]
+    fn 道路網が完成するとhaulerは少数大型に切り替わる() {
+        let mut st = state(2, false, 0);
+        assert_eq!(target_of(&st, ROLE_HAULER), 4);
+        st.has_road_network = true;
+        assert_eq!(target_of(&st, ROLE_HAULER), 3);
     }
 
     fn worker_target(st: &ColonyState) -> i32 {

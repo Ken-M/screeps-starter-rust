@@ -57,13 +57,12 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
         return;
     }
 
-    // 平時も worker の約半数はアップグレードに回す。
-    // 以前は RCL3 未満限定の傾斜だったが、RCL3 到達で傾斜が切れた途端、
-    // rampart / 道路の建設サイトが途切れなくなって upgrade 要員が固定1体
-    // まで落ち、進捗がほぼ止まった (実測: worker 11体で 1.2 progress/tick、
-    // エネルギー滞留 12k)。建設・修理は残り半数で十分回る。
+    // controller 脇の補給 container がまだ無い部屋では、worker の約半数を
+    // アップグレードに回す (RCL3 到達で傾斜が切れて進捗がほぼ止まった実測
+    // 1.2 progress/tick の再発防止)。container が立てば専任 upgrader ロール
+    // (WORK 全振り body) がこの傾斜を引き継ぐので、worker は建設・修理に戻る。
     // 名前のハッシュで決めるので、指名は creep の生涯を通じて安定する。
-    if name_parity(creep) {
+    if !super::ColonyState::observe().has_controller_stock && name_parity(creep) {
         super::upgrader::run_upgrader(creep);
         return;
     }

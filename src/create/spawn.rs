@@ -17,12 +17,6 @@ const EMERGENCY_CREEP_FLOOR: i32 = 4;
 /// 少し上、spawn の自己回復上限 (300) と同じ。
 const RECOVERY_MIN_BUDGET: u32 = 300;
 
-/// 部屋の道路がこの本数以上なら「道路網あり」とみなし、MOVE を減らした
-/// 道路前提 body に切り替える。幹線 (spawn⇄source⇄controller) の舗装が
-/// おおむね完了する本数。道路上では MOVE 1 で非MOVE 2 パーツを全速で
-/// 運べるため、同じエネルギーで積載/仕事量が約1.3倍になる。
-const ROAD_NETWORK_MIN: usize = 20;
-
 /// セーフモードを張るかを判定して、必要なら発動する。
 ///
 /// 旧実装は「spawnのHPが満タンでない」「creep数が上限の1/3未満」「攻撃パーツ持ちが0」
@@ -162,6 +156,28 @@ fn build_body(role: &str, energy: u32, on_roads: bool) -> Vec<Part> {
             }
         }
 
+        crate::creeps::ROLE_UPGRADER => {
+            // 座って upgrade する専用体。controller 脇 container の隣が定位置で、
+            // withdraw と upgrade は同 tick に併用できるので CARRY は2個で足りる。
+            // MOVE 1 で鈍足だが、歩くのは着任の一度きり (幹線道路が半減する)。
+            // 残り予算は全て WORK へ: 800 energy で WORK6 = worker (WORK3) の2倍。
+            let mut body = vec![Part::Move, Part::Carry, Part::Carry];
+            let mut left = energy.saturating_sub(
+                Part::Move.cost() + Part::Carry.cost() * 2,
+            );
+            while body.len() < screeps::constants::MAX_CREEP_SIZE as usize
+                && left >= Part::Work.cost()
+            {
+                body.push(Part::Work);
+                left -= Part::Work.cost();
+            }
+            if body.iter().any(|p| *p == Part::Work) {
+                body
+            } else {
+                Vec::new()
+            }
+        }
+
         crate::creeps::ROLE_DEFENDER => build_defender_body(energy, false),
 
         // worker とその他は汎用構成。
@@ -177,14 +193,6 @@ fn build_body(role: &str, energy: u32, on_roads: bool) -> Vec<Part> {
     }
 }
 
-/// 部屋に道路網が整備されているか。body の MOVE 比率の切り替えに使う。
-fn road_network_ready(room: &screeps::objects::Room) -> bool {
-    crate::util::room_structures(room)
-        .iter()
-        .filter(|s| s.structure_type() == StructureType::Road)
-        .count()
-        >= ROAD_NETWORK_MIN
-}
 
 /// defender の body。戦闘専用。被弾は body の先頭から受けるので、
 /// TOUGH (装甲) → MOVE → 武器 の順に並べ、武器パーツを最後まで残す。
@@ -344,7 +352,7 @@ pub fn do_spawn() {
         let body = if role == crate::creeps::ROLE_DEFENDER {
             build_defender_body(budget, defender_should_be_ranged())
         } else {
-            build_body(role, budget, road_network_ready(&room))
+            build_body(role, budget, colony.has_road_network)
         };
         if body.is_empty() {
             continue;
@@ -444,6 +452,20 @@ mod tests {
     }
 
     #[test]
+    fn 専任upgraderはwork全振りでmoveは1個() {
+        // 800 energy: M1 C2 (150) + WORK6 (600) = 750。
+        let body = build_body(crate::creeps::ROLE_UPGRADER, 800, false);
+        let count = |part: Part| body.iter().filter(|p| **p == part).count();
+        assert_eq!(count(Part::Move), 1);
+        assert_eq!(count(Part::Carry), 2);
+        assert_eq!(count(Part::Work), 6);
+        // 同じ予算の worker (WORK3) の2倍の進捗。
+        let worker = build_body(crate::creeps::ROLE_WORKER, 800, false);
+        let worker_works = worker.iter().filter(|p| **p == Part::Work).count();
+        assert!(count(Part::Work) >= worker_works * 2);
+    }
+
+    #[test]
     fn 道路網があればworkerは1対1対1になる() {
         let body = build_body(crate::creeps::ROLE_WORKER, 600, true);
         let count = |part: Part| body.iter().filter(|p| **p == part).count();
@@ -491,6 +513,7 @@ mod tests {
             crate::creeps::ROLE_HAULER,
             crate::creeps::ROLE_DEFENDER,
             crate::creeps::ROLE_WORKER,
+            crate::creeps::ROLE_UPGRADER,
         ] {
             for budget in [0, 100, 300, 1000, 12_900] {
                 for on_roads in [false, true] {
