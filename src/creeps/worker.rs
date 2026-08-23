@@ -13,7 +13,7 @@
 //!
 //! 対策は2段:
 //! - タイマーが半分を切ったら、全 worker がアップグレードを最優先する
-//! - 平時も worker のうち1体は必ずアップグレードに就く (進捗を止めない)
+//! - 平時も worker の約半数をアップグレードに固定する (進捗を止めない)
 
 use crate::util::*;
 use log::*;
@@ -56,11 +56,13 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
         return;
     }
 
-    // RCL 3 への傾斜。タワーが解禁されるまで、このコロニーの安全は
-    // 「誰も攻めてこないこと」だけに依存している (セーフモード残ゼロ)。
-    // RCL 3 未満の間は worker の約半数をアップグレードへ回す。
+    // 平時も worker の約半数はアップグレードに回す。
+    // 以前は RCL3 未満限定の傾斜だったが、RCL3 到達で傾斜が切れた途端、
+    // rampart / 道路の建設サイトが途切れなくなって upgrade 要員が固定1体
+    // まで落ち、進捗がほぼ止まった (実測: worker 11体で 1.2 progress/tick、
+    // エネルギー滞留 12k)。建設・修理は残り半数で十分回る。
     // 名前のハッシュで決めるので、指名は creep の生涯を通じて安定する。
-    if rcl_below_3(creep) && name_parity(creep) {
+    if name_parity(creep) {
         super::upgrader::run_upgrader(creep);
         return;
     }
@@ -79,14 +81,6 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
 
     debug!("{} has no build/repair work; upgrading", creep.name());
     super::upgrader::run_upgrader(creep);
-}
-
-fn rcl_below_3(creep: &Creep) -> bool {
-    creep
-        .room()
-        .and_then(|r| r.controller())
-        .map(|c| c.my() && c.level() < 3)
-        .unwrap_or(false)
 }
 
 /// creep 名から安定した2値を得る。worker の半数を選ぶのに使う。
