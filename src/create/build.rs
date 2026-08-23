@@ -85,13 +85,35 @@ fn plan_room(room: &Room) {
             if budget == 0 {
                 break;
             }
-            if has_container_adjacent(source.pos(), &structures, &sites) {
+            if has_container_near(source.pos(), 1, &structures, &sites) {
                 continue;
             }
             if let Some(xy) = best_adjacent_tile(room, source.pos(), &blocked, &placed_now) {
                 if try_place(room, xy, StructureType::Container) {
                     placed_now.insert((xy.x.u8(), xy.y.u8()));
                     budget -= 1;
+                }
+            }
+        }
+    }
+
+    // --- 1.5. controller 脇の container ---
+    // アップグレード係の補給拠点。hauler がここへ届け、worker は隣で
+    // 引き出してそのまま upgrade できる (source⇄controller の往復歩行が
+    // 消える。アップグレード throughput の本命)。
+    // range 2 に置く: range 1 は creep の立ち位置として予約済みで、
+    // range 2 なら隣接マスの全てが upgrade 射程 (3) に収まる。
+    if budget > 0 && count_of(StructureType::Container) < allowed(StructureType::Container, rcl) {
+        if let Some(controller) = room.controller() {
+            if controller.my() && !has_container_near(controller.pos(), 2, &structures, &sites)
+            {
+                if let Some(xy) =
+                    best_ring_tile(room, controller.pos(), 2, &blocked, &reserved, &placed_now)
+                {
+                    if try_place(room, xy, StructureType::Container) {
+                        placed_now.insert((xy.x.u8(), xy.y.u8()));
+                        budget -= 1;
+                    }
                 }
             }
         }
@@ -588,12 +610,13 @@ fn reserved_tiles(room: &Room) -> HashSet<(u8, u8)> {
     reserved
 }
 
-fn has_container_adjacent(
+fn has_container_near(
     pos: Position,
+    range: u32,
     structures: &[StructureObject],
     sites: &[screeps::objects::ConstructionSite],
 ) -> bool {
-    let near = |p: Position| p.get_range_to(pos) <= 1;
+    let near = |p: Position| p.get_range_to(pos) <= range;
 
     structures
         .iter()
@@ -696,6 +719,51 @@ fn pick_base_tile(
 }
 
 /// spawn から source / controller への経路に道路を敷く。
+/// 対象から range のリング上で、spawn に最も近い設置可能マスを選ぶ。
+/// controller 脇 container の配置に使う (幹線道路側に寄る)。
+fn best_ring_tile(
+    room: &Room,
+    pos: Position,
+    range: i8,
+    blocked: &HashSet<(u8, u8)>,
+    reserved: &HashSet<(u8, u8)>,
+    placed_now: &HashSet<(u8, u8)>,
+) -> Option<RoomXY> {
+    let spawn_pos = room.find(find::MY_SPAWNS, None).first().map(|s| s.pos())?;
+    let (cx, cy) = (pos.x().u8() as i8, pos.y().u8() as i8);
+
+    let mut best: Option<(u32, RoomXY)> = None;
+    for dx in -range..=range {
+        for dy in -range..=range {
+            // チェビシェフ距離がちょうど range のリングだけ。
+            if dx.abs().max(dy.abs()) != range {
+                continue;
+            }
+            let (x, y) = (cx + dx, cy + dy);
+            if !(0..50).contains(&x) || !(0..50).contains(&y) {
+                continue;
+            }
+            let (x, y) = (x as u8, y as u8);
+            if blocked.contains(&(x, y))
+                || reserved.contains(&(x, y))
+                || placed_now.contains(&(x, y))
+            {
+                continue;
+            }
+            let xy = RoomXY::checked_new(x, y).expect("in range");
+            let dist = spawn_pos.get_range_to(Position::new(
+                screeps::local::RoomCoordinate::new(x).expect("in range"),
+                screeps::local::RoomCoordinate::new(y).expect("in range"),
+                spawn_pos.room_name(),
+            ));
+            if best.is_none_or(|(b, _)| dist < b) {
+                best = Some((dist, xy));
+            }
+        }
+    }
+    best.map(|(_, xy)| xy)
+}
+
 fn plan_roads(
     room: &Room,
     spawn_pos: Position,
@@ -732,13 +800,12 @@ fn plan_roads(
             if blocked.contains(&(x, y)) || placed_now.contains(&(x, y)) {
                 continue;
             }
-            // 平地に道路を敷いても効果は薄いが、沼地は移動コストが5倍なので効く。
-            // 全面に敷くと維持費が嵩むため、沼地だけに絞る。
-            let terrain = room_terrain(room);
+            // 幹線 (spawn⇄source⇄controller) は平地も含めて舗装する。
+            // 旧実装は「沼のみ」でこの部屋では候補ゼロ = 道路網0本だった。
+            // 道路は MOVE 半減 body (haulerのCARRY2:MOVE1等) の前提であり、
+            // miner (MOVE1) の移動も倍速になる。建設コストは平地300と安く、
+            // decay 修理は repairer の瀕死優先が拾う。
             let xy = RoomXY::checked_new(x, y).expect("in range");
-            if terrain.get_xy(xy) != screeps::Terrain::Swamp {
-                continue;
-            }
 
             if try_place(room, xy, StructureType::Road) {
                 placed_now.insert((x, y));
