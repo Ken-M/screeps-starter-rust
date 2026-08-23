@@ -33,6 +33,21 @@ pub fn run_hauler(creep: &Creep) {
     let used = store.get_used_capacity(Some(ResourceType::Energy));
     let free = store.get_free_capacity(Some(ResourceType::Energy));
 
+    // 隣に落ちているエネルギーは、積み込み中かどうかに関わらず拾っておく。
+    // pickup は move / transfer / withdraw と同 tick に併用できる別枠の
+    // アクションなので、配達の途中でも1 tick も失わずに回収できる。
+    // 落下物は放置すると毎 tick 減衰で目減りする。
+    if free > 0 {
+        for resource in room.find(find::DROPPED_RESOURCES, None).iter() {
+            if resource.resource_type() == ResourceType::Energy
+                && creep.pos().is_near_to(resource.pos())
+            {
+                let _ = creep.pickup(resource);
+                break;
+            }
+        }
+    }
+
     let filling = if used == 0 {
         true
     } else if free == 0 {
@@ -70,6 +85,39 @@ pub fn collect_energy(creep: &Creep, room: &screeps::objects::Room) -> bool {
             if creep.pickup(resource).is_ok() {
                 return true;
             }
+        }
+    }
+
+    // 隣接する墓標・廃墟から引き出す。
+    //
+    // 経路探索 (find_nearest_stored_source) は墓標・廃墟を目標に含めて
+    // hauler をそこまで誘導するのに、旧実装は到着後に引き出すコードを
+    // 持っていなかった。hauler は墓標の隣で立ち尽くし、中身は減衰で
+    // 蒸発していた。落下物と同じ減衰物なので container より先に確認する。
+    for tombstone in room.find(find::TOMBSTONES, None).iter() {
+        if !creep.pos().is_near_to(tombstone.pos()) {
+            continue;
+        }
+        if tombstone
+            .store()
+            .get_used_capacity(Some(ResourceType::Energy))
+            == 0
+        {
+            continue;
+        }
+        if creep.withdraw(tombstone, ResourceType::Energy, None).is_ok() {
+            return true;
+        }
+    }
+    for ruin in room.find(find::RUINS, None).iter() {
+        if !creep.pos().is_near_to(ruin.pos()) {
+            continue;
+        }
+        if ruin.store().get_used_capacity(Some(ResourceType::Energy)) == 0 {
+            continue;
+        }
+        if creep.withdraw(ruin, ResourceType::Energy, None).is_ok() {
+            return true;
         }
     }
 
