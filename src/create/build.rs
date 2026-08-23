@@ -160,9 +160,10 @@ fn plan_room(room: &Room) {
     }
 
     // --- 4. 侵入経路の防衛 rampart ---
-    // 出口から拠点への経路上の隘路を rampart で塞ぎ、その内側に射撃陣地を張る。
+    // 出口から重要建造物へ敵が到達できる限り、侵入経路上の最も狭い「門」を
+    // rampart で塞いでいく (封鎖検証つき)。
     if budget > 0 && allowed(StructureType::Rampart, rcl) > 0 {
-        plan_defense_ramparts(room, spawn_pos, &structures, &sites, &mut budget, &mut placed_now);
+        plan_defense_ramparts(room, &structures, &sites, &mut budget, &mut placed_now);
     }
 
     // --- 5. 幹線道路 ---
@@ -172,148 +173,318 @@ fn plan_room(room: &Room) {
     }
 }
 
-/// 隘路とみなす 3x3 内の歩けるマス数の上限 (中心含む)。
-/// 幅1の通路で3、幅2の通路で6程度。これ以下なら「少ない rampart で
-/// 塞げて守りやすい場所」と判断する。E23N15 の実測では、拠点への全侵入
-/// 経路が幅2の南東通路 (open=6) に収束しており、6 でちょうど拾える。
-const CHOKE_MAX_OPEN_TILES: usize = 6;
+/// 塞いでよい「門」の幅の上限 (通行可能マスの列の長さ)。
+/// これより開けた場所しか残っていない部屋は封鎖を諦め、重要建造物の
+/// 直上 rampart と tower / defender に任せる。開豁地に線を引き始めると
+/// 枚数が際限なく増えるための安全弁。
+const MAX_CUT_WIDTH: usize = 4;
 
-/// 隘路の栓から拠点側に何マス下げて射撃陣地を置くか。
-/// 栓の外で止まる近接敵 (range 1) からは届かず、こちらの ranged / tower
-/// (range 3) は栓とその外側1マスまで撃てる距離。レンジ差で一方的に殴れる。
-const FIRING_POSITION_SETBACK: usize = 2;
+/// 防衛 rampart (重要建造物の直上を除く) の総数の上限。
+/// 封鎖に必要な枚数が地形的にこれを超える場合は打ち切る安全弁。
+/// rampart は建設コスト1だが、decay 分の修理維持費が枚数に比例する
+/// (修理目標 30k の RCL3 で1枚あたり約 0.03 energy/tick)。
+const MAX_DEFENSE_RAMPARTS: usize = 60;
+
+/// 部屋の一辺と総マス数。ビットマップの線形添字用。
+const ROOM_SIDE: usize = 50;
+const ROOM_TILES: usize = ROOM_SIDE * ROOM_SIDE;
+
+fn tile_idx(x: u8, y: u8) -> usize {
+    y as usize * ROOM_SIDE + x as usize
+}
+
+fn tile_xy(i: usize) -> (u8, u8) {
+    ((i % ROOM_SIDE) as u8, (i / ROOM_SIDE) as u8)
+}
 
 /// 侵入経路の防衛 rampart を計画する。
 ///
 /// 考え方:
 /// - rampart は自軍 creep だけが通過でき、敵は破壊しないと通れない。
-///   したがって出口→拠点の経路上で最も狭い場所 (隘路) に張れば、
-///   最小の枚数と修理コストで侵入を堰き止められる。
-/// - 栓のすぐ内側に置く射撃陣地 rampart は、栓で足止めされた近接敵の
-///   range 1 の外、こちらの ranged の range 3 の内という位置。防御側だけ
-///   が攻撃できる非対称な間合いを地形として固定する。
+///   出口→拠点の経路上の狭い場所に張れば、最小の枚数で堰き止められる。
+/// - 旧実装は「各辺の中央の出口への経路1本」の最窄点1箇所に 3x3 の栓を
+///   置くだけで、塞がったかどうかを検証していなかった。実測 (E23N15) では
+///   栓のすぐ東が素通しで、敵の経路が spawn の隣まで通っていた。
+/// - 本実装は封鎖検証つき。敵視点の BFS (壁・rampart・建造物は通行不可) で
+///   「出口から重要建造物の隣接マスへ到達できるか」を確かめ、到達できる限り
+///   その経路上で最も狭い門に rampart を張る、を繰り返す。到達不能になれば
+///   封鎖完了で、以後この関数は何も置かない (これが定常状態)。
 fn plan_defense_ramparts(
     room: &Room,
-    spawn_pos: Position,
     structures: &[StructureObject],
     sites: &[screeps::objects::ConstructionSite],
     budget: &mut usize,
     placed_now: &mut HashSet<(u8, u8)>,
 ) {
     let terrain = room_terrain(room);
-    let walkable = |x: i8, y: i8| -> bool {
-        if !(0..50).contains(&x) || !(0..50).contains(&y) {
-            return false;
-        }
-        let xy = RoomXY::checked_new(x as u8, y as u8).expect("in range");
-        terrain.get_xy(xy) != screeps::Terrain::Wall
-    };
-    // 3x3 内の歩けるマス数。少ないほど狭い = 守りやすい。
-    let open_around = |x: u8, y: u8| -> usize {
-        let (cx, cy) = (x as i8, y as i8);
-        let mut n = 0;
-        for dx in -1..=1i8 {
-            for dy in -1..=1i8 {
-                if walkable(cx + dx, cy + dy) {
-                    n += 1;
-                }
+
+    // 敵が通れないマスのビットマップを組む。
+    // 1) 地形の壁。ただし道路が乗っていれば敵も通れる。
+    let mut blocked = vec![false; ROOM_TILES];
+    for x in 0..ROOM_SIDE as u8 {
+        for y in 0..ROOM_SIDE as u8 {
+            let xy = RoomXY::checked_new(x, y).expect("in range");
+            if terrain.get_xy(xy) == screeps::Terrain::Wall {
+                blocked[tile_idx(x, y)] = true;
             }
         }
-        n
-    };
-
-    // 出口を4辺に分類する。侵入経路は辺ごとに考える。
-    let mut sides: [Vec<Position>; 4] = Default::default();
-    for exit in room.find(find::EXIT, None).iter() {
-        let p = Position::from(exit);
-        let (x, y) = (p.x().u8(), p.y().u8());
-        let side = if y == 0 {
-            0
-        } else if x == 49 {
-            1
-        } else if y == 49 {
-            2
-        } else {
-            3
-        };
-        sides[side].push(p);
+    }
+    for s in structures.iter() {
+        if s.structure_type() == StructureType::Road {
+            let p = s.pos();
+            blocked[tile_idx(p.x().u8(), p.y().u8())] = false;
+        }
     }
 
-    for exits in sides.iter() {
-        if *budget == 0 {
-            return;
-        }
-        let Some(&goal) = exits.get(exits.len() / 2) else {
-            continue;
-        };
-
-        // spawn からその辺の出口への最短経路 = 敵が使う侵入経路の逆順。
-        let opts = pathfinder::SearchOptions::new(|_: screeps::RoomName| {
-            pathfinder::MultiRoomCostResult::Default
-        })
-        .max_ops(2000)
-        .max_rooms(1);
-        let res = pathfinder::search(spawn_pos, goal, 0, Some(opts));
-        if res.incomplete() {
-            continue;
-        }
-        let path = res.path();
-
-        // 経路上で最も狭い場所を隘路に選ぶ。出口の縁は避ける
-        // (縁に置くと部屋の外から攻撃され、修理も出口を塞いで難しい)。
-        let mut choke: Option<(usize, usize)> = None; // (path index, open tiles)
-        for (i, step) in path.iter().enumerate() {
-            let (x, y) = (step.x().u8(), step.y().u8());
-            if x < EDGE_MARGIN || y < EDGE_MARGIN || x >= 50 - EDGE_MARGIN || y >= 50 - EDGE_MARGIN
-            {
-                continue;
-            }
-            let open = open_around(x, y);
-            if choke.is_none_or(|(_, best)| open < best) {
-                choke = Some((i, open));
-            }
-        }
-        let Some((choke_idx, open)) = choke else {
-            continue;
-        };
-        if open > CHOKE_MAX_OPEN_TILES {
-            // この辺の経路に狭い場所が無い。開けた場所に張っても回り込まれる
-            // だけなので、無理に置かない。
-            continue;
-        }
-
-        // 栓: 隘路の 3x3 のうち歩けるマス全部に rampart。
-        // 自軍は素通りできるので通行の副作用は無い。
-        let choke_pos = path[choke_idx];
-        let (cx, cy) = (choke_pos.x().u8() as i8, choke_pos.y().u8() as i8);
-        let mut targets: Vec<(u8, u8)> = Vec::new();
-        for dx in -1..=1i8 {
-            for dy in -1..=1i8 {
-                if walkable(cx + dx, cy + dy) {
-                    targets.push(((cx + dx) as u8, (cy + dy) as u8));
+    // 2) 建造物。container / road 以外は敵も (壊すまで) 通れない。
+    //    あわせて封鎖の防衛目標 = 重要建造物のマスを集める。
+    let mut critical_tiles: Vec<(u8, u8)> = Vec::new();
+    for s in structures.iter() {
+        let p = s.pos();
+        let (x, y) = (p.x().u8(), p.y().u8());
+        match s.structure_type() {
+            StructureType::Road | StructureType::Container => {}
+            ty => {
+                blocked[tile_idx(x, y)] = true;
+                let critical = matches!(
+                    ty,
+                    StructureType::Spawn
+                        | StructureType::Tower
+                        | StructureType::Storage
+                        | StructureType::Terminal
+                );
+                if critical && is_mine(s) {
+                    critical_tiles.push((x, y));
                 }
             }
         }
-        // 射撃陣地: 栓から拠点側へ下がった経路上のマス。
-        if choke_idx >= FIRING_POSITION_SETBACK {
-            let p = path[choke_idx - FIRING_POSITION_SETBACK];
-            targets.push((p.x().u8(), p.y().u8()));
+    }
+
+    // 3) rampart の建設サイトも「いずれ塞がるもの」として数える。
+    //    そうしないと完成までの数十 tick、毎回同じ場所を置き直そうとする。
+    //    ついでに防衛 rampart (重要建造物の直上を除く) の枚数を数える。
+    let mut defense_ramparts = 0usize;
+    for s in structures.iter() {
+        if s.structure_type() == StructureType::Rampart {
+            let p = s.pos();
+            if !critical_tiles.contains(&(p.x().u8(), p.y().u8())) {
+                defense_ramparts += 1;
+            }
+        }
+    }
+    for c in sites.iter() {
+        if c.structure_type() == StructureType::Rampart {
+            let p = c.pos();
+            let (x, y) = (p.x().u8(), p.y().u8());
+            blocked[tile_idx(x, y)] = true;
+            if !critical_tiles.contains(&(x, y)) {
+                defense_ramparts += 1;
+            }
+        }
+    }
+
+    if critical_tiles.is_empty() {
+        return;
+    }
+
+    // 防衛目標: 重要建造物の隣接マス。ここへ敵が立てなければ、近接攻撃は
+    // 届かない (遠隔は tower / defender の受け持ち)。
+    let mut target = vec![false; ROOM_TILES];
+    for &(cx, cy) in critical_tiles.iter() {
+        for dx in -1..=1i8 {
+            for dy in -1..=1i8 {
+                let (nx, ny) = (cx as i8 + dx, cy as i8 + dy);
+                if (0..ROOM_SIDE as i8).contains(&nx) && (0..ROOM_SIDE as i8).contains(&ny) {
+                    target[tile_idx(nx as u8, ny as u8)] = true;
+                }
+            }
+        }
+    }
+
+    // 封鎖できるまで「侵入経路を見つけては最も狭い門を塞ぐ」を繰り返す。
+    // 1反復で必ず1枚以上置く (置けなければ打ち切る) ので停止する。
+    while *budget > 0 {
+        let Some(path) = find_intrusion_path(&blocked, &target) else {
+            // 出口から重要建造物の隣へ到達できない = 封鎖完了。
+            return;
+        };
+
+        let Some((width, gate)) = pick_choke(&path, &blocked) else {
+            return;
+        };
+        if width > MAX_CUT_WIDTH {
+            debug!(
+                "{}: intrusion path stays open (narrowest gate is {} wide); leaving to towers",
+                room.name(),
+                width
+            );
+            return;
         }
 
-        for (x, y) in targets {
+        let mut placed = 0;
+        for &i in gate.iter() {
             if *budget == 0 {
+                break;
+            }
+            if defense_ramparts >= MAX_DEFENSE_RAMPARTS {
+                debug!(
+                    "{}: defense rampart cap ({}) reached; sealing aborted",
+                    room.name(),
+                    MAX_DEFENSE_RAMPARTS
+                );
                 return;
             }
+            let (x, y) = tile_xy(i);
             if placed_now.contains(&(x, y)) || has_rampart_at(x, y, structures, sites) {
                 continue;
             }
             let xy = RoomXY::checked_new(x, y).expect("in range");
             if try_place(room, xy, StructureType::Rampart) {
                 placed_now.insert((x, y));
+                blocked[i] = true;
                 *budget -= 1;
+                defense_ramparts += 1;
+                placed += 1;
+            }
+        }
+
+        if placed == 0 {
+            // 門が見つかったのに1枚も置けない (エンジン側の制約など)。
+            // 同じ門を見つけ続けて空回りするのを避ける。
+            return;
+        }
+    }
+}
+
+/// 敵視点の侵入経路を探す。
+///
+/// 部屋の縁の通行可能マス (= 出口) すべてを起点に 8 方向 BFS し、
+/// `target` のいずれかに到達する最短経路を「出口→target」の順で返す。
+/// 到達できなければ None (= 封鎖されている)。
+fn find_intrusion_path(blocked: &[bool], target: &[bool]) -> Option<Vec<usize>> {
+    // prev[i] == usize::MAX で未訪問。起点は自分自身を指す。
+    let mut prev = vec![usize::MAX; ROOM_TILES];
+    let mut queue = std::collections::VecDeque::new();
+
+    for i in 0..ROOM_TILES {
+        let (x, y) = tile_xy(i);
+        let on_border =
+            x == 0 || y == 0 || x == ROOM_SIDE as u8 - 1 || y == ROOM_SIDE as u8 - 1;
+        if on_border && !blocked[i] {
+            prev[i] = i;
+            queue.push_back(i);
+        }
+    }
+
+    fn reconstruct(prev: &[usize], mut cur: usize) -> Vec<usize> {
+        let mut path = vec![cur];
+        while prev[cur] != cur {
+            cur = prev[cur];
+            path.push(cur);
+        }
+        path.reverse();
+        path
+    }
+
+    // 縁の起点がすでに target になることは通常ない (重要建造物は縁から
+    // 離して置かれる) が、念のため。
+    if let Some(&hit) = queue.iter().find(|&&i| target[i]) {
+        return Some(reconstruct(&prev, hit));
+    }
+
+    while let Some(cur) = queue.pop_front() {
+        let (x, y) = tile_xy(cur);
+        for dx in -1..=1i8 {
+            for dy in -1..=1i8 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let (nx, ny) = (x as i8 + dx, y as i8 + dy);
+                if !(0..ROOM_SIDE as i8).contains(&nx) || !(0..ROOM_SIDE as i8).contains(&ny) {
+                    continue;
+                }
+                let n = tile_idx(nx as u8, ny as u8);
+                if blocked[n] || prev[n] != usize::MAX {
+                    continue;
+                }
+                prev[n] = cur;
+                if target[n] {
+                    return Some(reconstruct(&prev, n));
+                }
+                queue.push_back(n);
             }
         }
     }
+
+    None
+}
+
+/// 経路上で最も狭い「門」を選ぶ。返り値は (幅, 塞ぐべきマスの列)。
+/// 部屋の縁 EDGE_MARGIN 以内は対象外 (縁に張ると部屋の外から攻撃され、
+/// 修理も出口を塞いで難しい)。
+fn pick_choke(path: &[usize], blocked: &[bool]) -> Option<(usize, Vec<usize>)> {
+    let mut best: Option<(usize, Vec<usize>)> = None;
+
+    for k in 1..path.len().saturating_sub(1) {
+        let (x, y) = tile_xy(path[k]);
+        if x < EDGE_MARGIN
+            || y < EDGE_MARGIN
+            || x >= ROOM_SIDE as u8 - EDGE_MARGIN
+            || y >= ROOM_SIDE as u8 - EDGE_MARGIN
+        {
+            continue;
+        }
+        let Some((width, gate)) = gate_at(path, k, blocked) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(b, _)| width < *b) {
+            best = Some((width, gate));
+        }
+    }
+
+    best
+}
+
+/// path[k] を通る敵の進行方向に直交する「門」= 連続した通行可能マスの列。
+/// 返り値は (幅, マスの列)。幅が MAX_CUT_WIDTH を超えた時点、または部屋の
+/// 縁まで開いていた場合は「門ではない」として幅だけ大きく返す。
+fn gate_at(path: &[usize], k: usize, blocked: &[bool]) -> Option<(usize, Vec<usize>)> {
+    let (px, py) = tile_xy(path[k - 1]);
+    let (nx, ny) = tile_xy(path[k + 1]);
+    let sx = (nx as i8 - px as i8).signum();
+    let sy = (ny as i8 - py as i8).signum();
+    if sx == 0 && sy == 0 {
+        return None;
+    }
+    // 直交方向。進行方向が斜めなら門も斜めの列になる。斜めの列は
+    // 角のすり抜けで漏れ得るが、封鎖検証の反復が漏れを検出して追加で塞ぐ。
+    let (qx, qy) = (-sy, sx);
+
+    let (cx, cy) = tile_xy(path[k]);
+    let mut gate = vec![path[k]];
+
+    for dir in [1i8, -1] {
+        let mut step = 1i8;
+        loop {
+            let (gx, gy) = (cx as i8 + qx * step * dir, cy as i8 + qy * step * dir);
+            if !(0..ROOM_SIDE as i8).contains(&gx) || !(0..ROOM_SIDE as i8).contains(&gy) {
+                // 部屋の縁まで開いている。ここでは塞ぎ切れない。
+                return Some((ROOM_TILES, gate));
+            }
+            let i = tile_idx(gx as u8, gy as u8);
+            if blocked[i] {
+                break;
+            }
+            gate.push(i);
+            if gate.len() > MAX_CUT_WIDTH {
+                // 広すぎる門は途中で数えるのをやめる (上限判定に足りる幅だけ返す)。
+                return Some((gate.len(), gate));
+            }
+            step += 1;
+        }
+    }
+
+    Some((gate.len(), gate))
 }
 
 /// そのマスに rampart (完成済み or 建設予定) があるか。
@@ -599,5 +770,103 @@ fn try_place(room: &Room, xy: RoomXY, ty: StructureType) -> bool {
             );
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_map() -> Vec<bool> {
+        vec![false; ROOM_TILES]
+    }
+
+    /// (25,25) を中心に、北壁の gap_width マスだけ開いた箱を作る。
+    fn boxed_map(gap_width: usize) -> (Vec<bool>, Vec<bool>) {
+        let mut blocked = open_map();
+        for i in 20..=30u8 {
+            blocked[tile_idx(i, 20)] = true; // 北壁
+            blocked[tile_idx(i, 30)] = true; // 南壁
+            blocked[tile_idx(20, i)] = true; // 西壁
+            blocked[tile_idx(30, i)] = true; // 東壁
+        }
+        for w in 0..gap_width {
+            blocked[tile_idx(25 + w as u8, 20)] = false; // 北壁の門
+        }
+
+        let mut target = vec![false; ROOM_TILES];
+        target[tile_idx(25, 25)] = true;
+
+        (blocked, target)
+    }
+
+    #[test]
+    fn 開けた部屋では侵入経路が縁からtargetへ通る() {
+        let blocked = open_map();
+        let mut target = vec![false; ROOM_TILES];
+        target[tile_idx(25, 25)] = true;
+
+        let path = find_intrusion_path(&blocked, &target).expect("経路があるはず");
+        let (x, y) = tile_xy(path[0]);
+        assert!(x == 0 || y == 0 || x == 49 || y == 49, "起点は部屋の縁");
+        assert_eq!(*path.last().unwrap(), tile_idx(25, 25));
+    }
+
+    #[test]
+    fn 完全に囲まれたtargetへは侵入経路が無い() {
+        let (blocked, target) = boxed_map(0);
+        assert!(find_intrusion_path(&blocked, &target).is_none());
+    }
+
+    #[test]
+    fn 一枚扉の門は幅1として検出され塞げば封鎖される() {
+        let (mut blocked, target) = boxed_map(1);
+
+        let path = find_intrusion_path(&blocked, &target).expect("門があるので通れる");
+        assert!(path.contains(&tile_idx(25, 20)), "経路は門を通る");
+
+        let (width, gate) = pick_choke(&path, &blocked).expect("門が見つかる");
+        assert_eq!(width, 1, "最窄点は一枚扉");
+        assert_eq!(gate, vec![tile_idx(25, 20)]);
+
+        for i in gate {
+            blocked[i] = true;
+        }
+        assert!(
+            find_intrusion_path(&blocked, &target).is_none(),
+            "門を塞げば封鎖完了"
+        );
+    }
+
+    #[test]
+    fn 反復すれば幅2の門も封鎖に到達する() {
+        let (mut blocked, target) = boxed_map(2);
+
+        // plan_defense_ramparts のループ相当を rampart 設置なしで再現。
+        let mut placed = 0;
+        while let Some(path) = find_intrusion_path(&blocked, &target) {
+            let (width, gate) = pick_choke(&path, &blocked).expect("門が見つかる");
+            assert!(width <= MAX_CUT_WIDTH, "幅2の箱で開豁地判定は出ない");
+            for i in gate {
+                if !blocked[i] {
+                    blocked[i] = true;
+                    placed += 1;
+                }
+            }
+            assert!(placed < 20, "発散していないか");
+        }
+        assert!(placed >= 2, "少なくとも門の幅ぶんは置く");
+    }
+
+    #[test]
+    fn 開豁地は門として扱わない() {
+        // 壁が一切ない部屋: どの地点も幅が MAX_CUT_WIDTH を超える。
+        let blocked = open_map();
+        let mut target = vec![false; ROOM_TILES];
+        target[tile_idx(25, 25)] = true;
+
+        let path = find_intrusion_path(&blocked, &target).unwrap();
+        let (width, _) = pick_choke(&path, &blocked).expect("候補自体は返る");
+        assert!(width > MAX_CUT_WIDTH, "開豁地に線を引き始めない");
     }
 }
