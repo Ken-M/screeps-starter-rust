@@ -85,7 +85,7 @@ pub fn calc_average(room_name: &RoomName) {
                 structure_hp_average.insert(*room_name, total_hp / struct_count);
 
                 structure_hp_min.insert(*room_name, hp_min);
-                info!(
+                debug!(
                     "{:?}: structure_hp_average:{:?}/min:{:?}",
                     room_name,
                     total_hp / struct_count,
@@ -101,7 +101,7 @@ pub fn calc_average(room_name: &RoomName) {
                     .insert(*room_name, sum_of_progress / construction_count);
                 construction_progress_min.insert(*room_name, progress_min);
 
-                info!(
+                debug!(
                     "{:?}: construction_progress_average:{:?}:min:{:?}",
                     *room_name,
                     sum_of_progress / construction_count,

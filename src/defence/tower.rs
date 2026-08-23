@@ -115,7 +115,7 @@ pub fn run_tower() {
                                         if let Some(repairable) = structure.as_repairable() {
                                             let r = my_tower.repair(repairable);
                                             if r.is_ok() {
-                                                info!("repair my structure!!");
+                                                debug!("repair my structure!!");
                                                 is_done = true;
                                                 break;
                                             }
@@ -161,7 +161,7 @@ pub fn run_tower() {
                         if let Some((_, structure)) = repair_target {
                             if let Some(repairable) = structure.as_repairable() {
                                 if my_tower.repair(repairable).is_ok() {
-                                    info!(
+                                    debug!(
                                         "repair my structure!!:{:?}",
                                         structure.structure_type()
                                     );

@@ -25,7 +25,7 @@ pub fn game_loop() {
         logging::setup_logging(logging::Info);
     });
 
-    info!(
+    debug!(
         "loop starting! CPU: {}, Bucket:{}",
         screeps::game::cpu::get_used(),
         screeps::game::cpu::bucket()
@@ -33,32 +33,96 @@ pub fn game_loop() {
 
     util::clear_init_flag();
 
-    info!("running market cpu:{}", screeps::game::cpu::get_used());
+    debug!("running market cpu:{}", screeps::game::cpu::get_used());
     manage::market::run_market();
 
-    info!("running links cpu:{}", screeps::game::cpu::get_used());
+    debug!("running links cpu:{}", screeps::game::cpu::get_used());
     manage::link::run_link();
 
-    info!("running spawns cpu:{}", screeps::game::cpu::get_used());
+    debug!("running spawns cpu:{}", screeps::game::cpu::get_used());
     create::spawn::do_spawn();
 
-    info!("running build planner cpu:{}", screeps::game::cpu::get_used());
+    debug!("running build planner cpu:{}", screeps::game::cpu::get_used());
     create::build::run_planner();
 
-    info!("running creeps cpu:{}", screeps::game::cpu::get_used());
+    debug!("running creeps cpu:{}", screeps::game::cpu::get_used());
     creeps::creep_loop();
 
-    info!("running towers cpu:{}", screeps::game::cpu::get_used());
+    debug!("running towers cpu:{}", screeps::game::cpu::get_used());
     defence::tower::run_tower();
 
     let time = screeps::game::time();
 
     if time % 32 == 3 {
-        info!("running memory cleanup");
+        debug!("running memory cleanup");
         cleanup_memory();
     }
 
-    info!("done! cpu: {}", screeps::game::cpu::get_used())
+    if time.is_multiple_of(SUMMARY_INTERVAL) {
+        log_summary();
+    }
+
+    debug!("done! cpu: {}", screeps::game::cpu::get_used())
+}
+
+/// 定点観測サマリの間隔 (tick)。
+const SUMMARY_INTERVAL: u32 = 100;
+
+/// 定点観測サマリ。tick 末尾 (CPU 計上がほぼ済んだ地点) で呼ぶ。
+///
+/// creep 単位・フェーズ単位の逐次ログは debug に落とした (INFO のままだと
+/// 10時間で26MB 出る一方、成長したかどうかはどこにも残らなかった)。
+/// INFO の定常出力はこのサマリと、spawn / planner / 戦闘などのイベントだけ。
+/// 1行目が部屋ごとの成長と経済、2行目がコロニーの人口と CPU。
+fn log_summary() {
+    use crate::mem::MemoryExt;
+    use screeps::prelude::*;
+
+    for room in screeps::game::rooms().values() {
+        let Some(controller) = room.controller() else {
+            continue;
+        };
+        if !controller.my() {
+            continue;
+        }
+
+        info!(
+            "summary {}: rcl:{} progress:{}/{} downgrade:{} energy:{}/{}",
+            room.name(),
+            controller.level(),
+            controller.progress().unwrap_or(0),
+            controller.progress_total().unwrap_or(0),
+            controller.ticks_to_downgrade().unwrap_or(0),
+            room.energy_available(),
+            room.energy_capacity_available(),
+        );
+    }
+
+    // 人口構成。BTreeMap でロール名順に安定させる。
+    let mut counts: std::collections::BTreeMap<String, u32> = Default::default();
+    for creep in screeps::game::creeps().values() {
+        let role = creep
+            .memory()
+            .string(mem::keys::ROLE)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "none".to_string());
+        *counts.entry(role).or_insert(0) += 1;
+    }
+    let roles = counts
+        .iter()
+        .map(|(role, n)| format!("{}:{}", role, n))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let colony = creeps::ColonyState::observe();
+    info!(
+        "summary colony: creeps[{}] backlog:{} cpu:{:.2} bucket:{}",
+        roles,
+        colony.energy_backlog,
+        screeps::game::cpu::get_used(),
+        screeps::game::cpu::bucket(),
+    );
 }
 
 fn cleanup_memory() {

@@ -17,7 +17,7 @@ use screeps::{find, Creep, ResourceType, StructureType};
 
 pub fn run_hauler(creep: &Creep) {
     let name = creep.name();
-    info!("running hauler {}", name);
+    debug!("running hauler {}", name);
 
     let Some(room) = creep.room() else {
         return;

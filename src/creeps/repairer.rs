@@ -10,7 +10,7 @@ use screeps::{find, Creep};
 /// 修理する。仕事が無いときの委譲は呼び出し側 (worker) が持つ。
 pub fn run_repairer_task(creep: &Creep) {
     let name = creep.name();
-    info!("repairing {}", creep.name());
+    debug!("repairing {}", creep.name());
 
     debug!("check spawns {}", name);
     let my_spawns = &creep
@@ -44,7 +44,7 @@ pub fn run_repairer_task(creep: &Creep) {
                     let r = creep.repair(repairable);
 
                     if r.is_ok() {
-                        info!(
+                        debug!(
                             "repair my_structure!!:{:?},{:?},{:?}",
                             structure.structure_type(),
                             structure.pos().x(),
@@ -73,7 +73,7 @@ pub fn run_repairer_task(creep: &Creep) {
                         let r = creep.repair(repairable);
 
                         if r.is_ok() {
-                            info!(
+                            debug!(
                                 "repair my_structure!!:{:?},{:?},{:?}",
                                 structure.structure_type(),
                                 structure.pos().x(),
@@ -95,7 +95,7 @@ pub fn run_repairer_task(creep: &Creep) {
     if res.path().len() > 0 {
         let res = move_by_search_result(&creep, &res);
         if let Err(e) = res {
-            info!("couldn't move to repair: {:?}", e);
+            debug!("couldn't move to repair: {:?}", e);
         }
         return;
     }
@@ -109,7 +109,7 @@ pub fn run_repairer_task(creep: &Creep) {
     if res.path().len() > 0 {
         let res = move_by_search_result(&creep, &res);
         if let Err(e) = res {
-            info!("couldn't move to repair: {:?}", e);
+            debug!("couldn't move to repair: {:?}", e);
         }
         return;
     }

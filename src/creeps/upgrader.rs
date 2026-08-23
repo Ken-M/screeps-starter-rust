@@ -7,7 +7,7 @@ use screeps::Creep;
 
 pub fn run_upgrader(creep: &Creep) {
     let name = creep.name();
-    info!("running upgrader {}", creep.name());
+    debug!("running upgrader {}", creep.name());
 
     debug!("check controller {}", name);
 
@@ -26,7 +26,7 @@ pub fn run_upgrader(creep: &Creep) {
                     if res.path().len() > 0 {
                         let res = move_by_search_result(&creep, &res);
                         if let Err(e) = res {
-                            info!("couldn't move to upgrade: {:?}", e);
+                            debug!("couldn't move to upgrade: {:?}", e);
                         } else {
                             return;
                         }
@@ -54,7 +54,7 @@ pub fn run_upgrader(creep: &Creep) {
     if res.path().len() > 0 {
         let res = move_by_search_result(&creep, &res);
         if let Err(e) = res {
-            info!("couldn't move to build: {:?}", e);
+            debug!("couldn't move to build: {:?}", e);
         }
 
         return;

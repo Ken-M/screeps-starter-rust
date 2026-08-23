@@ -231,7 +231,7 @@ fn orders_for(resource: ResourceType) -> Vec<Order> {
 }
 
 pub fn run_market() {
-    info!("running market");
+    debug!("running market");
 
     let root = mem::root();
 
@@ -248,7 +248,7 @@ pub fn run_market() {
     // 部屋が3つあれば理論上「クレジットの70%」が3重に発行され得た。
     // 使った分を引いていく予算変数として扱う。
     let mut credit_budget = market::credits();
-    info!("current credits:{:?}", credit_budget);
+    debug!("current credits:{:?}", credit_budget);
 
     let (my_sell_orders, my_buy_orders) = maintain_orders(market_count);
 

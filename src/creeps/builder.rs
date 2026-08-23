@@ -6,7 +6,7 @@ use screeps::{find, Creep};
 /// 建設する。仕事が無いときの委譲は呼び出し側 (worker) が持つ。
 pub fn run_builder_task(creep: &Creep) {
     let name = creep.name();
-    info!("building {}", creep.name());
+    debug!("building {}", creep.name());
 
     debug!("check construction sites {}", name);
     let construction_sites = &creep
@@ -25,7 +25,7 @@ pub fn run_builder_task(creep: &Creep) {
         {
             let r = creep.build(construction_site);
             if r.is_ok() {
-                info!("build to my_construction_sites!!");
+                debug!("build to my_construction_sites!!");
                 return;
             }
         }
@@ -37,7 +37,7 @@ pub fn run_builder_task(creep: &Creep) {
     if res.path().len() > 0 {
         let res = move_by_search_result(&creep, &res);
         if let Err(e) = res {
-            info!("couldn't move to build: {:?}", e);
+            debug!("couldn't move to build: {:?}", e);
         }
 
         return;
