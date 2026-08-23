@@ -69,6 +69,14 @@ npm run deploy -- --server mmo
 - 操作: `Start-ScheduledTask` / `Stop-ScheduledTask -TaskName screeps-watch-console`
 - 初回セットアップ (別マシン移行時など): `pwsh -File tools\install-watch-console-task.ps1`
 
+## デプロイ後自動ベンチ (運用)
+
+`npm run deploy` の postdeploy フックが `js_tools/bench.js --wait` をバックグラウンドで
+起動し、デプロイ前後それぞれ 3 区間 (300 tick) の summary を比較して
+`logs/bench.log` に追記する。進捗レート低下 (>25%)・CPU 増 (>25%)・実行時エラーを
+自動で ⚠ 判定する。手動実行は `npm run bench` (今あるログで即比較) または
+`npm run bench -- --wait`。
+
 ## Migration to 0.22
 
 Versions of [`screeps-game-api`] at 0.22 or higher are no longer compatible with the
