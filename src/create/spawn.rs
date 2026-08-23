@@ -17,6 +17,12 @@ const EMERGENCY_CREEP_FLOOR: i32 = 4;
 /// 少し上、spawn の自己回復上限 (300) と同じ。
 const RECOVERY_MIN_BUDGET: u32 = 300;
 
+/// 部屋の道路がこの本数以上なら「道路網あり」とみなし、MOVE を減らした
+/// 道路前提 body に切り替える。幹線 (spawn⇄source⇄controller) の舗装が
+/// おおむね完了する本数。道路上では MOVE 1 で非MOVE 2 パーツを全速で
+/// 運べるため、同じエネルギーで積載/仕事量が約1.3倍になる。
+const ROAD_NETWORK_MIN: usize = 20;
+
 /// セーフモードを張るかを判定して、必要なら発動する。
 ///
 /// 旧実装は「spawnのHPが満タンでない」「creep数が上限の1/3未満」「攻撃パーツ持ちが0」
@@ -123,7 +129,7 @@ fn check_safe_mode(spawn: &screeps::objects::StructureSpawn) {
 /// さらに総数の 1/3 に攻撃パーツを混ぜていた。ハイブリッド body は攻撃も経済も
 /// 中途半端で高くつく。ロールごとに最適な構成を組み、戦闘 body は defender
 /// 専用にする。
-fn build_body(role: &str, energy: u32) -> Vec<Part> {
+fn build_body(role: &str, energy: u32, on_roads: bool) -> Vec<Part> {
     match role {
         crate::creeps::ROLE_MINER => {
             // 動かないので MOVE は1個。CARRY 1個は container へ移すため。
@@ -147,19 +153,43 @@ fn build_body(role: &str, energy: u32) -> Vec<Part> {
         }
 
         crate::creeps::ROLE_HAULER | crate::creeps::ROLE_CARRIER_MINERAL => {
-            // 掘らないので CARRY と MOVE だけ。平地で満載でも全速が出る 1:1。
-            unit_body(&[Part::Carry, Part::Move], energy)
+            // 掘らないので CARRY と MOVE だけ。
+            // 道路網があれば 2:1 (道路上で満載全速)、無ければ 1:1 (平地全速)。
+            if on_roads {
+                unit_body(&[Part::Carry, Part::Carry, Part::Move], energy)
+            } else {
+                unit_body(&[Part::Carry, Part::Move], energy)
+            }
         }
 
         crate::creeps::ROLE_DEFENDER => build_defender_body(energy, false),
 
-        // worker とその他は汎用構成。平地で満載でも全速の 2:1:1。
-        _ => unit_body(&[Part::Move, Part::Move, Part::Carry, Part::Work], energy),
+        // worker とその他は汎用構成。
+        // 道路網があれば 1:1:1 (道路上で満載全速、200/unit)、
+        // 無ければ 2:1:1 (平地で満載全速、250/unit)。
+        _ => {
+            if on_roads {
+                unit_body(&[Part::Move, Part::Carry, Part::Work], energy)
+            } else {
+                unit_body(&[Part::Move, Part::Move, Part::Carry, Part::Work], energy)
+            }
+        }
     }
 }
 
-/// defender の body。戦闘専用で、MOVE を前に並べて被弾はまず MOVE が受ける
-/// (武器パーツが残っていれば反撃は続けられる)。
+/// 部屋に道路網が整備されているか。body の MOVE 比率の切り替えに使う。
+fn road_network_ready(room: &screeps::objects::Room) -> bool {
+    crate::util::room_structures(room)
+        .iter()
+        .filter(|s| s.structure_type() == StructureType::Road)
+        .count()
+        >= ROAD_NETWORK_MIN
+}
+
+/// defender の body。戦闘専用。被弾は body の先頭から受けるので、
+/// TOUGH (装甲) → MOVE → 武器 の順に並べ、武器パーツを最後まで残す。
+/// TOUGH は 10 エネルギーで 100 hits — 最安の装甲なので武器2つにつき
+/// 1枚を盾として前置する (多すぎると鈍足になるので控えめに)。
 ///
 /// ranged なら RANGED_ATTACK (射程3)、そうでなければ ATTACK (射程1)。
 /// 近接は rampart の栓の最前列で敵を受け止める役、遠隔は射撃陣地から
@@ -167,13 +197,26 @@ fn build_body(role: &str, energy: u32) -> Vec<Part> {
 fn build_defender_body(energy: u32, ranged: bool) -> Vec<Part> {
     let weapon = if ranged { Part::RangedAttack } else { Part::Attack };
     let unit_cost = Part::Move.cost() + weapon.cost();
-    let n = (energy / unit_cost) as usize;
-    let n = n.min(screeps::constants::MAX_CREEP_SIZE as usize / 2);
-    if n == 0 {
-        return Vec::new();
+
+    // 武器数の上限から始めて、TOUGH 込みで予算とサイズ上限に収まるまで減らす。
+    let mut weapons = (energy / unit_cost) as usize;
+    loop {
+        if weapons == 0 {
+            return Vec::new();
+        }
+        let toughs = weapons.div_ceil(2);
+        let cost = toughs as u32 * Part::Tough.cost() + weapons as u32 * unit_cost;
+        let size = toughs + weapons * 2;
+        if cost <= energy && size <= screeps::constants::MAX_CREEP_SIZE as usize {
+            break;
+        }
+        weapons -= 1;
     }
-    let mut body = vec![Part::Move; n];
-    body.extend(std::iter::repeat(weapon).take(n));
+
+    let toughs = weapons.div_ceil(2);
+    let mut body = vec![Part::Tough; toughs];
+    body.extend(std::iter::repeat(Part::Move).take(weapons));
+    body.extend(std::iter::repeat(weapon).take(weapons));
     body
 }
 
@@ -301,7 +344,7 @@ pub fn do_spawn() {
         let body = if role == crate::creeps::ROLE_DEFENDER {
             build_defender_body(budget, defender_should_be_ranged())
         } else {
-            build_body(role, budget)
+            build_body(role, budget, road_network_ready(&room))
         };
         if body.is_empty() {
             continue;
@@ -364,7 +407,7 @@ mod tests {
     #[test]
     fn minerはworkを5個で頭打ちにする() {
         // 予算が潤沢でも WORK は source 再生速度と釣り合う5個まで。
-        let body = build_body(crate::creeps::ROLE_MINER, 10_000);
+        let body = build_body(crate::creeps::ROLE_MINER, 10_000, false);
         let works = body.iter().filter(|p| **p == Part::Work).count();
         assert_eq!(works, 5);
         assert_eq!(body.iter().filter(|p| **p == Part::Move).count(), 1);
@@ -374,40 +417,70 @@ mod tests {
     #[test]
     fn minerはworkが積めない予算では成立しない() {
         // MOVE+CARRY = 100。WORK (100) に届かない予算では空を返す。
-        assert!(build_body(crate::creeps::ROLE_MINER, 150).is_empty());
+        assert!(build_body(crate::creeps::ROLE_MINER, 150, false).is_empty());
     }
 
     #[test]
     fn haulerはcarryとmoveだけで構成される() {
-        let body = build_body(crate::creeps::ROLE_HAULER, 550);
+        let body = build_body(crate::creeps::ROLE_HAULER, 550, false);
         assert!(!body.is_empty());
         assert!(body.iter().all(|p| *p == Part::Carry || *p == Part::Move));
-        // 1:1 比率。
+        // 道路なしは 1:1 比率。
         let carries = body.iter().filter(|p| **p == Part::Carry).count();
         let moves = body.iter().filter(|p| **p == Part::Move).count();
         assert_eq!(carries, moves);
     }
 
     #[test]
-    fn defenderはmoveが前に並ぶ() {
-        // 被弾は body の先頭から。MOVE を先に失っても反撃は続けられる。
-        let body = build_body(crate::creeps::ROLE_DEFENDER, 520);
-        assert!(!body.is_empty());
-        let first_attack = body.iter().position(|p| *p == Part::Attack).unwrap();
-        assert!(body[..first_attack].iter().all(|p| *p == Part::Move));
+    fn 道路網があればhaulerは2対1で積載が増える() {
+        // 600 energy: 道路なし 1:1 = CARRY6 (300容量)、
+        // 道路あり 2:1 = CARRY8 (400容量)。同じ予算で 1.33 倍。
+        let flat = build_body(crate::creeps::ROLE_HAULER, 600, false);
+        let road = build_body(crate::creeps::ROLE_HAULER, 600, true);
+        let carries = |b: &[Part]| b.iter().filter(|p| **p == Part::Carry).count();
+        assert!(carries(&road) > carries(&flat));
+        let moves = road.iter().filter(|p| **p == Part::Move).count();
+        assert_eq!(carries(&road), moves * 2);
     }
 
     #[test]
-    fn 遠隔defenderはranged_attackだけを積みmoveが前に並ぶ() {
-        // RANGED_ATTACK(150) + MOVE(50) = 200/unit。660 なら3ユニット。
+    fn 道路網があればworkerは1対1対1になる() {
+        let body = build_body(crate::creeps::ROLE_WORKER, 600, true);
+        let count = |part: Part| body.iter().filter(|p| **p == part).count();
+        assert_eq!(count(Part::Move), count(Part::Work));
+        assert_eq!(count(Part::Carry), count(Part::Work));
+    }
+
+    #[test]
+    fn defenderはtough_move_武器の順に並ぶ() {
+        // 被弾は body の先頭から。装甲 → 脚 → 武器の順で失い、
+        // 武器パーツが最後まで残って反撃を続けられる。
+        let body = build_body(crate::creeps::ROLE_DEFENDER, 520, false);
+        assert!(!body.is_empty());
+        let first_move = body.iter().position(|p| *p == Part::Move).unwrap();
+        let first_attack = body.iter().position(|p| *p == Part::Attack).unwrap();
+        assert!(body[..first_move].iter().all(|p| *p == Part::Tough));
+        assert!(body[first_move..first_attack]
+            .iter()
+            .all(|p| *p == Part::Move));
+        // TOUGH は武器2つにつき1枚。
+        let toughs = body.iter().filter(|p| **p == Part::Tough).count();
+        let attacks = body.iter().filter(|p| **p == Part::Attack).count();
+        assert_eq!(toughs, attacks.div_ceil(2));
+    }
+
+    #[test]
+    fn 遠隔defenderはranged_attackだけを積みtoughが前に並ぶ() {
+        // RANGED_ATTACK(150) + MOVE(50) = 200/unit + TOUGH(10)/2unit。
+        // 660 なら 3ユニット (620) + TOUGH2 (640)。
         let body = build_defender_body(660, true);
         assert_eq!(
             body.iter().filter(|p| **p == Part::RangedAttack).count(),
             3
         );
         assert_eq!(body.iter().filter(|p| **p == Part::Move).count(), 3);
-        let first_weapon = body.iter().position(|p| *p == Part::RangedAttack).unwrap();
-        assert!(body[..first_weapon].iter().all(|p| *p == Part::Move));
+        assert_eq!(body.iter().filter(|p| **p == Part::Tough).count(), 2);
+        assert_eq!(body[0], Part::Tough);
         assert!(!body.contains(&Part::Attack));
     }
 
@@ -420,9 +493,11 @@ mod tests {
             crate::creeps::ROLE_WORKER,
         ] {
             for budget in [0, 100, 300, 1000, 12_900] {
-                let body = build_body(role, budget);
-                assert!(cost_of(&body) <= budget, "{} over budget {}", role, budget);
-                assert!(body.len() <= screeps::constants::MAX_CREEP_SIZE as usize);
+                for on_roads in [false, true] {
+                    let body = build_body(role, budget, on_roads);
+                    assert!(cost_of(&body) <= budget, "{} over budget {}", role, budget);
+                    assert!(body.len() <= screeps::constants::MAX_CREEP_SIZE as usize);
+                }
             }
         }
     }
