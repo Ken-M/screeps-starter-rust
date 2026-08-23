@@ -58,7 +58,9 @@ pub fn run_hauler(creep: &Creep) {
     creep.memory().set(keys::FILLING, filling);
 
     if filling {
-        if collect_energy(creep, &room) {
+        // hauler は controller 脇の補給 container から引き出さない
+        // (自分の配達先を自分で空にする空回りになる)。
+        if collect_energy(creep, &room, false) {
             return;
         }
         // 拾える物が何も見つからない。積荷があるなら先に届けてしまう。
@@ -74,8 +76,10 @@ pub fn run_hauler(creep: &Creep) {
 
 /// 拾う。近くに落ちているものを優先し、無ければ container / storage から引く。
 /// worker もエネルギー補給に使う (spawn / extension は生産用なので触らない)。
+/// use_controller_stock: controller 脇の補給 container から引き出してよいか。
+/// worker (消費側) は true、hauler (配達側) は false。
 /// 戻り値は「拾えた・引けた・拾いに向かった」か。false なら部屋に何も無い。
-pub fn collect_energy(creep: &Creep, room: &screeps::objects::Room) -> bool {
+pub fn collect_energy(creep: &Creep, room: &screeps::objects::Room, use_controller_stock: bool) -> bool {
     // 足下や隣に落ちている資源。採掘者が溢れさせた分がここに来る。
     for resource in room.find(find::DROPPED_RESOURCES, None).iter() {
         if resource.resource_type() != ResourceType::Energy {
@@ -132,6 +136,9 @@ pub fn collect_energy(creep: &Creep, room: &screeps::objects::Room) -> bool {
         if !creep.pos().is_near_to(structure.pos()) {
             continue;
         }
+        if !use_controller_stock && is_controller_stock(structure) {
+            continue;
+        }
         if !check_stored(structure, &ResourceType::Energy, 0) {
             continue;
         }
@@ -152,7 +159,8 @@ pub fn collect_energy(creep: &Creep, room: &screeps::objects::Room) -> bool {
     }
 
     // 近くに無いので探しに行く。貯蔵優先 (自分では掘らない)。
-    let res = find_nearest_stored_source(creep, &ResourceKind::ENERGY, false);
+    let res =
+        find_nearest_stored_source(creep, &ResourceKind::ENERGY, false, !use_controller_stock);
     if !res.path().is_empty() {
         let _ = move_by_search_result(creep, &res);
         return true;
@@ -198,11 +206,31 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         StructureType::Spawn,
         StructureType::Tower,
         StructureType::Extension,
-        StructureType::Storage,
     ] {
         let res = find_nearest_transferable_structure(
             creep,
             &ty,
+            &ResourceType::Energy,
+            None,
+            None,
+        );
+        if !res.path().is_empty() {
+            let _ = move_by_search_result(creep, &res);
+            return;
+        }
+    }
+
+    // 生産用の備蓄が満ちていたら、controller 脇の補給 container へ。
+    // 余剰エネルギーをアップグレード係の手元へ届ける物流の後半分。
+    if deliver_controller_stock(creep, room) {
+        return;
+    }
+
+    // それも満ちていれば storage へ退蔵する。
+    {
+        let res = find_nearest_transferable_structure(
+            creep,
+            &StructureType::Storage,
             &ResourceType::Energy,
             None,
             None,
@@ -227,4 +255,34 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         }
         return;
     }
+}
+
+/// controller 脇の補給 container へ届ける。
+/// 隣接していれば transfer、遠ければ移動。対象が無い・満杯なら false。
+fn deliver_controller_stock(creep: &Creep, room: &screeps::objects::Room) -> bool {
+    for structure in room_structures(room).iter() {
+        if !is_controller_stock(structure) {
+            continue;
+        }
+        if !check_transferable(structure, &ResourceType::Energy, None) {
+            continue;
+        }
+        if creep.pos().is_near_to(structure.pos()) {
+            if let Some(transferable) = structure.as_transferable() {
+                if creep
+                    .transfer(transferable, ResourceType::Energy, None)
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+            continue;
+        }
+        let res = find_path(creep, &structure.pos(), 1);
+        if !res.path().is_empty() {
+            let _ = move_by_search_result(creep, &res);
+            return true;
+        }
+    }
+    false
 }

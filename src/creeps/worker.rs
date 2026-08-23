@@ -37,7 +37,8 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
         == 0
     {
         if let Some(room) = creep.room() {
-            super::hauler::collect_energy(creep, &room);
+            // worker は消費側なので controller 脇の補給 container からも引く。
+            super::hauler::collect_energy(creep, &room, true);
         }
         return;
     }

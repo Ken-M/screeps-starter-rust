@@ -132,6 +132,24 @@ fn repair_target_hp(structure: &StructureObject, hits_max: u32) -> u32 {
     }
 }
 
+/// controller 脇の補給 container か (controller の range 2 以内)。
+/// 物流の向きを決める区別: hauler は「ここへ届ける (引き出さない)」、
+/// worker は「ここから引き出す」。source 脇 container (miner が注ぎ、
+/// hauler が汲む) と役割が逆なので、混同すると配達→回収の空回りになる。
+pub fn is_controller_stock(structure: &StructureObject) -> bool {
+    if structure.structure_type() != StructureType::Container {
+        return false;
+    }
+    let pos = structure.pos();
+    let Some(room) = screeps::game::rooms().get(pos.room_name()) else {
+        return false;
+    };
+    let Some(controller) = room.controller() else {
+        return false;
+    };
+    controller.my() && pos.get_range_to(controller.pos()) <= 2
+}
+
 fn live_tickcount_from_kind(
     structure: &StructureObject,
     attackable_hits: u32,

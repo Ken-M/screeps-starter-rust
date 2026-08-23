@@ -135,6 +135,7 @@ pub fn find_nearest_stored_source(
     creep: &screeps::objects::Creep,
     resource_kind: &ResourceKind,
     is_2nd_check: bool,
+    exclude_controller_stock: bool,
 ) -> SearchResults {
     let mut find_item_list = Vec::<(Position, u32)>::new();
     let resource_type_list = make_resoucetype_list(&resource_kind);
@@ -181,6 +182,11 @@ pub fn find_nearest_stored_source(
         let item_list = all_structures();
 
         for chk_item in item_list.iter() {
+            // controller 脇の補給 container は hauler の汲み出し先ではない
+            // (hauler が配達した端から引き出す空回りを防ぐ)。
+            if exclude_controller_stock && is_controller_stock(chk_item) {
+                continue;
+            }
             if chk_item.structure_type() == StructureType::Container
                 || chk_item.structure_type() == StructureType::Storage
                 || chk_item.structure_type() == StructureType::Link
