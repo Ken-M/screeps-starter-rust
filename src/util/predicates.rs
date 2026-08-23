@@ -1,9 +1,11 @@
 //! 建造物の状態判定と資源の分類。
 
+use crate::constants::barrier_target_hp;
 use screeps::constants::*;
 use screeps::enums::StructureObject;
 use screeps::prelude::*;
 use screeps::ResourceType;
+use screeps::StructureType;
 use screeps::Terrain;
 
 use super::cache::room_terrain;
@@ -93,44 +95,41 @@ pub fn check_transferable(
 }
 
 pub fn check_repairable(structure: &StructureObject) -> bool {
-    match structure.as_owned() {
-        Some(my_structure) => {
-            if my_structure.my() == false {
-                return false;
-            }
-
-            match structure.as_attackable() {
-                Some(attackable) => {
-                    if attackable.hits() < attackable.hits_max() {
-                        if attackable.hits() > 0 {
-                            return true;
-                        }
-                    }
-                }
-
-                None => {
-                    // my_struct is not attackable.
-                }
-            }
-        }
-
-        None => {
-            match structure.as_attackable() {
-                Some(attackable) => {
-                    if attackable.hits() < attackable.hits_max() {
-                        if attackable.hits() > 0 {
-                            return true;
-                        }
-                    }
-                }
-
-                None => {
-                    // my_struct is not attackable.
-                }
-            }
+    // 所有型の建造物は自分の物だけ直す。
+    // 無所有 (道路・container・壁) は所有判定なしで対象。
+    if let Some(my_structure) = structure.as_owned() {
+        if my_structure.my() == false {
+            return false;
         }
     }
-    return false;
+
+    let Some(attackable) = structure.as_attackable() else {
+        // not attackable (= hits を持たない).
+        return false;
+    };
+
+    let hits = attackable.hits();
+    if hits == 0 {
+        return false;
+    }
+
+    hits < repair_target_hp(structure, attackable.hits_max())
+}
+
+/// どこまで修理するかの目標 HP。
+///
+/// 通常の建造物は hits_max。Rampart / Wall だけは RCL 連動の目標
+/// (`barrier_target_hp`) で頭打ちにする。hits_max (Rampart 1M〜、Wall 300M) を
+/// 目標にすると事実上永久に「修理対象あり」になり、worker の委譲チェーンが
+/// upgrade まで到達しなくなるため (実測で修理労働の100%が Rampart に吸われた)。
+fn repair_target_hp(structure: &StructureObject, hits_max: u32) -> u32 {
+    match structure.structure_type() {
+        StructureType::Rampart | StructureType::Wall => {
+            let rcl = super::cache::room_rcl(structure.pos().room_name());
+            hits_max.min(barrier_target_hp(rcl))
+        }
+        _ => hits_max,
+    }
 }
 
 fn live_tickcount_from_kind(

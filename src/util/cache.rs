@@ -27,6 +27,8 @@ thread_local! {
         RefCell::new(HashMap::new());
     /// tick 内で共有する仕事の有無。詳細は `work_summary()`。
     static WORK_SUMMARY_CACHE: RefCell<Option<Rc<WorkSummary>>> = RefCell::new(None);
+    /// tick 内で共有する部屋ごとの RCL。詳細は `room_rcl()`。
+    static RCL_CACHE: RefCell<HashMap<RoomName, u8>> = RefCell::new(HashMap::new());
 }
 
 /// 味方 creep のマスに乗せるコスト。
@@ -187,6 +189,7 @@ pub fn clear_init_flag() {
     HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());
     TERRAIN_CACHE.with(|cache| cache.borrow_mut().clear());
     WORK_SUMMARY_CACHE.with(|cache| *cache.borrow_mut() = None);
+    RCL_CACHE.with(|cache| cache.borrow_mut().clear());
 
     // MAP_CACHE (静的コスト層) は TTL で管理するのでここでは消さない。
     super::stats::clear_stats_caches();
@@ -204,5 +207,27 @@ pub fn room_terrain(room: &screeps::objects::Room) -> Rc<LocalRoomTerrain> {
         let terrain: Rc<LocalRoomTerrain> = Rc::new(room.get_terrain().into());
         cache.borrow_mut().insert(name, Rc::clone(&terrain));
         terrain
+    })
+}
+
+/// 部屋の RCL (tick 単位でキャッシュ)。
+///
+/// Rampart / Wall の修理目標 (`barrier_target_hp`) の判定は構造物ループの
+/// 内側から呼ばれる。rooms().get → controller → level は JS 呼び出しの
+/// 連鎖なので、部屋あたり 1 tick 1回に抑える。
+/// controller の無い部屋・見えない部屋は 0。
+pub fn room_rcl(room_name: RoomName) -> u8 {
+    RCL_CACHE.with(|cache| {
+        if let Some(cached) = cache.borrow().get(&room_name) {
+            return *cached;
+        }
+
+        let level = game::rooms()
+            .get(room_name)
+            .and_then(|room| room.controller())
+            .map(|controller| controller.level())
+            .unwrap_or(0);
+        cache.borrow_mut().insert(room_name, level);
+        level
     })
 }
