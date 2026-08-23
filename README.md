@@ -71,8 +71,8 @@ npm run deploy -- --server mmo
 
 ## デプロイ後自動ベンチ (運用)
 
-`npm run deploy` の postdeploy フックが `js_tools/bench.js --wait` をバックグラウンドで
-起動し、デプロイ前後それぞれ 3 区間 (300 tick) の summary を比較して
+`npm run deploy` の成功後に deploy.js が `js_tools/bench.js --wait` をバックグラウンドで
+起動し (npm の postdeploy フックは .npmrc の ignore-scripts=true で無効なため deploy.js から直接呼ぶ)、デプロイ前後それぞれ 3 区間 (300 tick) の summary を比較して
 `logs/bench.log` に追記する。進捗レート低下 (>25%)・CPU 増 (>25%)・実行時エラーを
 自動で ⚠ 判定する。手動実行は `npm run bench` (今あるログで即比較) または
 `npm run bench -- --wait`。
