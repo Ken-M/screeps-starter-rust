@@ -1,8 +1,9 @@
 // npm の postdeploy フックから呼ばれ、bench.js --wait を切り離して起動する。
 //
-// デプロイ後の summary が揃うまで 20 分程度かかるため、deploy コマンド自体は
-// ブロックせず、待機はバックグラウンドに任せる。結果は logs/bench.log に
-// 追記される (確認: `Get-Content logs/bench.log -Tail 15`)。
+// デプロイ後、settle (人口入れ替わり待ち) + 計測で summary が揃うまで
+// 100 分程度かかるため、deploy コマンド自体はブロックせず、待機は
+// バックグラウンドに任せる。結果は logs/bench.log に追記される
+// (確認: `Get-Content logs/bench.log -Tail 15`)。
 
 'use strict';
 
@@ -25,4 +26,4 @@ const child = spawn(
 );
 child.unref();
 
-console.log('bench: scheduled (result will be appended to logs/bench.log in ~20 min)');
+console.log('bench: scheduled (result will be appended to logs/bench.log in ~100 min)');
