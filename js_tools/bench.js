@@ -27,8 +27,13 @@ const has = (name) => args.includes(name);
 
 const LOG_PATH = opt('--log', path.join(__dirname, '..', 'logs', 'mmo.log'));
 const OUT_PATH = opt('--out', null);
-const INTERVALS = parseInt(opt('--intervals', '3'), 10);
-const TIMEOUT_MIN = parseInt(opt('--timeout', '45'), 10);
+const INTERVALS = parseInt(opt('--intervals', '8'), 10);
+const TIMEOUT_MIN = parseInt(opt('--timeout', '150'), 10);
+// after 側の計測を始める前に読み飛ばす区間数。デプロイ直後は旧世代 creep が
+// 生き残っており (寿命 1500 tick ≒ 90分)、新ロジックの定常状態になっていない。
+// 実測: 5b624d5 の進捗 1/3 の回帰は 19 分の計測では現れず「✅ 回帰なし」と
+// 誤判定された。人口が入れ替わり始める約 50 分後から測る。
+const SETTLE = parseInt(opt('--settle', '8'), 10);
 // autolaunch が渡す「この時刻より後のマーカーだけを見る」境界 (ms epoch)。
 // 無指定ならログ中の最後のマーカーを使う。
 const MARKER_AFTER = opt('--marker-after', null);
@@ -100,15 +105,16 @@ const fmt = (x, digits = 2) => (x == null ? 'n/a' : x.toFixed(digits));
 function report(parsed) {
   const { rooms, colony, markerIdx, markerTs, errorsAfter } = parsed;
   const before = rooms.slice(Math.max(0, markerIdx - (INTERVALS + 1)), markerIdx);
-  // デプロイ直後の1点はリロードのノイズを含むので、区間としてはそのまま使う
-  // (最初の区間だけ低めに出るが、平均 INTERVALS 区間で均される)。
-  const after = rooms.slice(markerIdx, markerIdx + INTERVALS + 1);
+  // after 側はデプロイ直後の SETTLE 区間 (旧世代 creep の残存期間) を
+  // 読み飛ばし、新ロジックの定常状態を測る。
+  const afterStart = markerIdx + SETTLE;
+  const after = rooms.slice(afterStart, afterStart + INTERVALS + 1);
 
   const beforeRate = avg(progressRates(before));
   const afterRate = avg(progressRates(after));
 
   const colonyBefore = colony.slice(Math.max(0, markerIdx - (INTERVALS + 1)), markerIdx);
-  const colonyAfter = colony.slice(markerIdx, markerIdx + INTERVALS + 1);
+  const colonyAfter = colony.slice(afterStart, afterStart + INTERVALS + 1);
   const beforeCpu = avg(colonyBefore.map((c) => c.cpu));
   const afterCpu = avg(colonyAfter.map((c) => c.cpu));
   const beforeBacklog = avg(colonyBefore.map((c) => c.backlog));
@@ -143,6 +149,10 @@ function report(parsed) {
     flags.push(`CPU +${((afterCpu / beforeCpu - 1) * 100).toFixed(0)}%`);
   if (beforeRate && afterRate && afterRate < beforeRate * 0.75)
     flags.push(`進捗 ${((afterRate / beforeRate - 1) * 100).toFixed(0)}%`);
+  // 滞留の発散は進捗低下より先に現れる先行指標 (実測: 5b624d5 で 4k→15k)。
+  // 倍増かつ絶対量もそれなり、で判定して平時の揺れは拾わない。
+  if (beforeBacklog && afterBacklog > beforeBacklog * 2 && afterBacklog > 5000)
+    flags.push(`backlog ${fmt(beforeBacklog, 0)}→${fmt(afterBacklog, 0)}`);
   lines.push(flags.length ? `verdict       : ⚠ 要確認 (${flags.join(' / ')})` : 'verdict       : ✅ 回帰なし');
 
   return lines.join('\n');
@@ -150,8 +160,8 @@ function report(parsed) {
 
 function enoughData(parsed) {
   if (parsed.markerIdx < 0) return false;
-  // after 側に INTERVALS 区間ぶん (= INTERVALS+1 点) 揃ったか。
-  return parsed.rooms.length - parsed.markerIdx >= INTERVALS + 1;
+  // after 側に SETTLE + INTERVALS 区間ぶんの点が揃ったか。
+  return parsed.rooms.length - parsed.markerIdx >= SETTLE + INTERVALS + 1;
 }
 
 async function main() {
