@@ -234,6 +234,17 @@ fn surplus_haulers(state: &ColonyState) -> i32 {
     (state.energy_backlog / HAULER_SURPLUS_ENERGY_STEP).min(state.total_sources)
 }
 
+/// 専任 upgrader の上限。
+///
+/// 収入は source 1本 ≒ 10/tick、upgrader 1体 (WORK 6) の消費は 6/tick なので、
+/// source あたり2体で需要 ≒ 収入。これを超えて置いても補給 container が
+/// 空く時間が延びるだけで進捗は増えず、800 energy の body の量産で
+/// spawn 予算を食い、あぶれた個体が MOVE 1 の鈍足 body で自力調達に出る
+/// (実測: upgrader 8 で progress/tick が健全期の 1/3 に停滞)。
+fn upgrader_cap(state: &ColonyState) -> i32 {
+    state.total_sources * 2
+}
+
 /// 目標のロール構成。優先度の高い順に並べる。
 ///
 /// 目標は creep 総数の比率ではなく、コロニーの構造 (source 数・敵の有無・
@@ -259,21 +270,27 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
         // 専任アップグレード係。controller 脇の補給 container の隣に座り、
         // withdraw と upgrade を同 tick に併用して WORK 全振り body を回す。
         // container が無いうちは 0 (worker の名前パリティ傾斜が代替)。
+        // 増員は収入連動の上限 (upgrader_cap) で頭打ちにする。
         (
             ROLE_UPGRADER,
             if state.has_controller_stock {
-                state.total_sources + surplus_workers(state)
+                (state.total_sources + surplus_workers(state)).min(upgrader_cap(state))
             } else {
                 0
             },
         ),
         // 汎用労働力 (建設・修理、暇ならアップグレード)。
-        // 専任 upgrader が立っている間はその分を差し引く。
+        // 専任 upgrader が立っている間はその分を差し引き、upgrader の上限から
+        // あふれた増員分はこちらへ戻す (機動力があり建設・修理もこなすので、
+        // 補給 container の周りに滞留しない)。
         // 合計は従来の sources*2 + 1 + 増員 と同じに保つ。
         (
             ROLE_WORKER,
             if state.has_controller_stock {
-                state.total_sources + 1
+                let overflow = (state.total_sources + surplus_workers(state)
+                    - upgrader_cap(state))
+                .max(0);
+                state.total_sources + 1 + overflow
             } else {
                 state.total_sources * 2 + 1 + surplus_workers(state)
             },
@@ -638,6 +655,24 @@ mod tests {
         let base = target_of(&st, ROLE_UPGRADER);
         st.energy_backlog = WORKER_SURPLUS_ENERGY_STEP * 2;
         assert_eq!(target_of(&st, ROLE_UPGRADER), base + 2);
+    }
+
+    #[test]
+    fn upgrader増員は収入上限で頭打ちになり_あふれはworkerへ() {
+        let mut st = state(2, false, 0);
+        st.has_controller_stock = true;
+
+        // 実測の停滞時を再現: backlog 10k → surplus 6。source 2 の収入は
+        // 20/tick なので upgrader (WORK6) は 4体で需要 ≒ 収入。
+        st.energy_backlog = 10_000;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 4);
+        // あふれた4体は worker (基本 3) へ戻る。
+        assert_eq!(target_of(&st, ROLE_WORKER), 3 + 4);
+        // upgrader + worker の合計は上限導入前 (sources*2 + 1 + 増員) と同じ。
+        assert_eq!(
+            target_of(&st, ROLE_UPGRADER) + target_of(&st, ROLE_WORKER),
+            2 * 2 + 1 + 6
+        );
     }
 
     #[test]
