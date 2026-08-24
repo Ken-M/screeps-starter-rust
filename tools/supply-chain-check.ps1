@@ -27,7 +27,20 @@ if ((Test-Path $log) -and ((Get-Item $log).Length -gt 5MB)) {
 
 function Log($msg) { Add-Content $log "$(Get-Date -Format o) $msg" }
 
+# 多重起動ガード (watch-console-daemon.ps1 と同じ方式)。
+# 実測 (2026-08-24): 手動実行とタスクが重なり、先行実行の git gc と後続の
+# git fetch が衝突して "unable to write file ... Permission denied /
+# unpack-objects failed" になった。ロックが取れなければ何もせず正常終了する
+# (先行側が完走すればチェックの目的は果たされている)。
+$created = $false
+$mutex = New-Object System.Threading.Mutex($true, 'screeps-supply-chain-check', [ref]$created)
+if (-not $created) {
+    Log "SKIP: 別の supply-chain check が実行中"
+    exit 0
+}
+
 $failures = @()
+$warnings = @()
 Log "=== supply-chain check start ==="
 
 # ---- 1) 凍結インデックスの前進 (クールダウンを常に7日に保つ) ----
@@ -37,6 +50,13 @@ if ($LASTEXITCODE -ne 0) {
     # インデックスが古いまま止まるのは安全側 (新しいクレートが見えないだけ) だが、
     # 放置すると開発に支障が出るので通知対象にする。
     $failures += "update-frozen-index 失敗 (exit $LASTEXITCODE)"
+}
+# git fetch の失敗は update-frozen-index 内では致命扱いにならない
+# (ローカル参照から凍結点を固定できれば exit 0)。ただ黙って
+# "OK: 全チェック通過" と記録すると失敗が続いても気づけないので、
+# 警告として結果行に残す。恒常化は 1b) の鮮度ガードが拾う。
+if ($out | Where-Object { $_ -match 'fatal:|error:|unpack-objects failed' }) {
+    $warnings += "git fetch に失敗 (凍結点はローカル参照から前進)"
 }
 
 # ---- 1b) 凍結点の鮮度確認 ----
@@ -77,5 +97,10 @@ if ($failures.Count -gt 0) {
 
 # 全チェック通過 → 過去のアラートマーカーは消す
 if (Test-Path $alert) { Remove-Item $alert -Force }
-Log "OK: 全チェック通過"
+if ($warnings.Count -gt 0) {
+    $warnings | ForEach-Object { Log "WARN: $_" }
+    Log "OK: 全チェック通過 (警告 $($warnings.Count) 件)"
+} else {
+    Log "OK: 全チェック通過"
+}
 exit 0
