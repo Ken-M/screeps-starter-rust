@@ -5,8 +5,9 @@
 //! 採掘を静的採掘者に任せた分、運搬者は WORK を持たずに済む。同じエネルギー予算で
 //! CARRY と MOVE だけを積めるので、1体あたりの輸送量が増える。
 //!
-//! 配達先の優先順は補給係と同じ (spawn → tower → extension) だが、
-//! 補給係が自分で掘りに行くのに対し、運搬者は必ず貯蔵から引く。
+//! 配達先の優先順は spawn → tower → extension → controller 脇の補給
+//! container → storage。ただし補給 container が枯れかけのときだけ
+//! spawn の直後に割り込む (専任 upgrader を止めないため)。
 
 
 use crate::mem::{keys, MemoryExt};
@@ -201,23 +202,23 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         }
     }
 
-    // 無ければ最寄りの搬入先へ向かう。
-    for ty in [
-        StructureType::Spawn,
-        StructureType::Tower,
-        StructureType::Extension,
-    ] {
-        let res = find_nearest_transferable_structure(
-            creep,
-            &ty,
-            &ResourceType::Energy,
-            None,
-            None,
-        );
-        if !res.path().is_empty() {
-            let _ = move_by_search_result(creep, &res);
-            return;
-        }
+    // 無ければ優先順に搬入先へ向かう。spawn (生産の要) は常に最優先。
+    if seek_transferable(creep, StructureType::Spawn) {
+        return;
+    }
+
+    // controller 脇の補給 container が枯れかけなら tower / extension より
+    // 先に届ける。常に後回しだと、生産が回って extension が満ちない間は
+    // 一度も届かず、専任 upgrader (MOVE 1 の座り仕事 body) が自力調達に
+    // 出て寿命を移動で溶かす (実測: 補給が絶えた時間帯に進捗が 1/3 に低下)。
+    if controller_stock_running_low(room) && deliver_controller_stock(creep, room) {
+        return;
+    }
+
+    if seek_transferable(creep, StructureType::Tower)
+        || seek_transferable(creep, StructureType::Extension)
+    {
+        return;
     }
 
     // 生産用の備蓄が満ちていたら、controller 脇の補給 container へ。
@@ -255,6 +256,31 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         }
         return;
     }
+}
+
+/// controller 脇の補給 container の在庫がこれを下回ったら「枯れかけ」とみなし、
+/// tower / extension より先に補給する。専任 upgrader (WORK 全振り) が
+/// source 数 + 増員分いると消費は 20〜50/tick 程度で、hauler の一往復の間に
+/// 使い切られる量。容量 2000 の半分より手前で先回りする。
+const CONTROLLER_STOCK_LOW: u32 = 1000;
+
+/// controller 脇の補給 container のどれかが枯れかけか。
+fn controller_stock_running_low(room: &screeps::objects::Room) -> bool {
+    room_structures(room)
+        .iter()
+        .filter(|s| is_controller_stock(s))
+        .any(|s| !check_stored(s, &ResourceType::Energy, CONTROLLER_STOCK_LOW))
+}
+
+/// 種別 ty の受け入れ可能な最寄りの施設へ移動する。対象が無ければ false。
+fn seek_transferable(creep: &Creep, ty: StructureType) -> bool {
+    let res =
+        find_nearest_transferable_structure(creep, &ty, &ResourceType::Energy, None, None);
+    if res.path().is_empty() {
+        return false;
+    }
+    let _ = move_by_search_result(creep, &res);
+    true
 }
 
 /// controller 脇の補給 container へ届ける。

@@ -57,6 +57,12 @@ pub const ROAD_NETWORK_MIN: usize = 20;
 /// やや小さめに取り、滞留に対して増員が先行するようにする。
 const WORKER_SURPLUS_ENERGY_STEP: i32 = 1500;
 
+/// 滞留エネルギーがこの量を超えるごとに hauler を1体追加する。
+/// 増員は消費側 (upgrader / worker) だけだと輸送が追いつかず、滞留が
+/// 発散する (実測: hauler を 4→3 に減らした直後、backlog 4k→15k)。
+/// 消費側 (STEP 1500) より緩い傾斜で運び手も追従させる。
+const HAULER_SURPLUS_ENERGY_STEP: i32 = 4000;
+
 /// ロール構成を決めるのに要る、その tick のコロニーの状況。
 pub struct ColonyState {
     /// 見えている creep の総数。
@@ -217,6 +223,17 @@ fn surplus_workers(state: &ColonyState) -> i32 {
     (state.energy_backlog / WORKER_SURPLUS_ENERGY_STEP).min(state.total_sources * 3)
 }
 
+/// 余剰エネルギーによる hauler の増員数。
+///
+/// worker / upgrader の増員 (surplus_workers) は消費能力を増やすが、
+/// エネルギーは hauler が届けて初めて消費される。運び手を固定したまま
+/// 消費者だけ増やすと、滞留は source 脇 container と地面に積もり続け、
+/// 落下分は毎 tick 減衰で蒸発する。滞留に比例して hauler も足す。
+/// 上限は source 数 (輸送需要の源は結局 source の産出量なので)。
+fn surplus_haulers(state: &ColonyState) -> i32 {
+    (state.energy_backlog / HAULER_SURPLUS_ENERGY_STEP).min(state.total_sources)
+}
+
 /// 目標のロール構成。優先度の高い順に並べる。
 ///
 /// 目標は creep 総数の比率ではなく、コロニーの構造 (source 数・敵の有無・
@@ -232,9 +249,12 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
         // 運搬。source からの搬出2系統 + 拠点内の補給。
         // 道路網が完成すると body が CARRY2:MOVE1 の大型になるので、
         // 同じ輸送量を少ない体数で運べる (spawn 予算と CPU の節約)。
+        // エネルギーが滞留しているときは輸送も詰まっているので増員する。
         (
             ROLE_HAULER,
-            state.total_sources + if state.has_road_network { 1 } else { 2 },
+            state.total_sources
+                + if state.has_road_network { 1 } else { 2 }
+                + surplus_haulers(state),
         ),
         // 専任アップグレード係。controller 脇の補給 container の隣に座り、
         // withdraw と upgrade を同 tick に併用して WORK 全振り body を回す。
@@ -410,7 +430,7 @@ pub fn creep_loop() {
         // 新体制のロールへ振り直す。
         if matches!(
             role.as_str(),
-            "harvester" | "harvester_spawn" | "builder" | "upgrader" | "repairer"
+            "harvester" | "harvester_spawn" | "builder" | "repairer"
         ) {
             cmem.del(crate::mem::keys::ROLE);
             // 旧ステートマシンの残骸も掃除しておく。
@@ -626,6 +646,24 @@ mod tests {
         assert_eq!(target_of(&st, ROLE_HAULER), 4);
         st.has_road_network = true;
         assert_eq!(target_of(&st, ROLE_HAULER), 3);
+    }
+
+    #[test]
+    fn エネルギーが滞留するとhaulerも増える() {
+        let mut st = state(2, false, 0);
+        let base = target_of(&st, ROLE_HAULER);
+
+        // 増員の入口。1 STEP 分の滞留で +1。
+        st.energy_backlog = HAULER_SURPLUS_ENERGY_STEP;
+        assert_eq!(target_of(&st, ROLE_HAULER), base + 1);
+
+        // STEP 未満なら基本数のまま。
+        st.energy_backlog = HAULER_SURPLUS_ENERGY_STEP - 1;
+        assert_eq!(target_of(&st, ROLE_HAULER), base);
+
+        // 実測の発散時 (backlog 15k) でも上限は source 数まで。
+        st.energy_backlog = 15_000;
+        assert_eq!(target_of(&st, ROLE_HAULER), base + st.total_sources);
     }
 
     fn worker_target(st: &ColonyState) -> i32 {
