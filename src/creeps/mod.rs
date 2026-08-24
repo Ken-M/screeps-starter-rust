@@ -543,6 +543,7 @@ pub fn creep_loop() {
                 victim.creep.memory().del(crate::mem::keys::UPGRADE_DUTY);
                 victim.creep.memory().del(crate::mem::keys::MINE_AT);
                 victim.creep.memory().del(crate::mem::keys::UPGRADE_SEAT);
+                victim.creep.memory().del(crate::mem::keys::REPAIR_AT);
                 victim.role = role.to_string();
 
                 *role_counts.entry(surplus_role.to_string()).or_insert(0) -= 1;

@@ -85,6 +85,9 @@ pub mod keys {
     /// ロール転換時に creep_loop が消す。miner の MINE_AT と同じ発想で、
     /// 席を取り合って互いをブロックするのを防ぐ。
     pub const UPGRADE_SEAT: &str = "upgrade_seat";
+    /// 粘着中の修理対象 "x,y"。repairer が書き、対象が閾値+余裕幅まで
+    /// 回復するか消滅したら自分で消す。ロール転換時は creep_loop が消す。
+    pub const REPAIR_AT: &str = "repair_at";
     /// 攻撃対象の座標。attacker_routine が書き、敵消滅時に消す。
     pub const ATTACK_TARGET_POS: &str = "attack_target_pos";
     /// hauler の積み込み中フラグ。満載まで拾い、空になるまで届ける
