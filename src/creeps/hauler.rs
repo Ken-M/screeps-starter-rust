@@ -14,7 +14,8 @@ use crate::mem::{keys, MemoryExt};
 use crate::util::*;
 use log::*;
 use screeps::prelude::*;
-use screeps::{find, Creep, ResourceType, StructureType};
+use screeps::local::RoomXY;
+use screeps::{find, look, Creep, Position, ResourceType, StructureType};
 
 pub fn run_hauler(creep: &Creep) {
     let name = creep.name();
@@ -253,8 +254,50 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
             if !res.path().is_empty() {
                 let _ = move_by_search_result(creep, &res);
             }
+            return;
         }
+        // 待機位置に着いた。道路の上で止まると幹線の対向を塞ぐので一歩どく。
+        step_off_road(creep, room, spawn.pos());
         return;
+    }
+}
+
+/// 道路上で待機しない。隣の非道路マス (待機圏 range 3 の内側) へ一歩どく。
+/// 待機圏の外へ出ると次 tick に戻ってきて発振するので圏内に限る。
+fn step_off_road(creep: &Creep, room: &screeps::objects::Room, anchor: Position) {
+    let cur = creep.pos();
+    if !tile_has_road(room, cur.xy()) {
+        return;
+    }
+    for dx in -1..=1i8 {
+        for dy in -1..=1i8 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let x = cur.x().u8() as i8 + dx;
+            let y = cur.y().u8() as i8 + dy;
+            if !(0..50).contains(&x) || !(0..50).contains(&y) {
+                continue;
+            }
+            let Ok(xy) = RoomXY::checked_new(x as u8, y as u8) else {
+                continue;
+            };
+            if tile_has_road(room, xy) || !is_walkable_tile(room, xy) {
+                continue;
+            }
+            let pos = Position::new(xy.x, xy.y, room.name());
+            if anchor.get_range_to(pos) > 3 {
+                continue;
+            }
+            if !room.look_for_at_xy(look::CREEPS, x as u8, y as u8).is_empty() {
+                continue;
+            }
+            let res = find_path(creep, &pos, 0);
+            if !res.path().is_empty() {
+                let _ = move_by_search_result(creep, &res);
+            }
+            return;
+        }
     }
 }
 

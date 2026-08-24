@@ -81,6 +81,10 @@ pub mod keys {
     pub const MINE_AT: &str = "mine_at";
     /// 固定アップグレード係のフラグ。creep_loop が指名・解除する。
     pub const UPGRADE_DUTY: &str = "upgrade_duty";
+    /// 専任 upgrader の指定席 "x,y"。upgrader が自分で claim し、
+    /// ロール転換時に creep_loop が消す。miner の MINE_AT と同じ発想で、
+    /// 席を取り合って互いをブロックするのを防ぐ。
+    pub const UPGRADE_SEAT: &str = "upgrade_seat";
     /// 攻撃対象の座標。attacker_routine が書き、敵消滅時に消す。
     pub const ATTACK_TARGET_POS: &str = "attack_target_pos";
     /// hauler の積み込み中フラグ。満載まで拾い、空になるまで届ける

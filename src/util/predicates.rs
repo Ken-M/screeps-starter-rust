@@ -150,6 +150,35 @@ pub fn is_controller_stock(structure: &StructureObject) -> bool {
     controller.my() && pos.get_range_to(controller.pos()) <= 2
 }
 
+/// そのマスへ歩いて入れるか (地形と構造物のみ。creep の有無は見ない)。
+/// 壁地形でも道路があれば歩ける。
+pub fn is_walkable_tile(room: &screeps::objects::Room, xy: screeps::local::RoomXY) -> bool {
+    let mut on_road = false;
+    for s in super::cache::room_structures(room)
+        .iter()
+        .filter(|s| s.pos().xy() == xy)
+    {
+        match s.structure_type() {
+            StructureType::Road => on_road = true,
+            StructureType::Container => {}
+            StructureType::Rampart => {
+                if !check_my_structure(s) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    on_road || room_terrain(room).get_xy(xy) != Terrain::Wall
+}
+
+/// そのマスに道路があるか。
+pub fn tile_has_road(room: &screeps::objects::Room, xy: screeps::local::RoomXY) -> bool {
+    super::cache::room_structures(room)
+        .iter()
+        .any(|s| s.structure_type() == StructureType::Road && s.pos().xy() == xy)
+}
+
 fn live_tickcount_from_kind(
     structure: &StructureObject,
     attackable_hits: u32,

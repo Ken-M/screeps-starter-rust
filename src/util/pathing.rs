@@ -5,6 +5,7 @@
 
 use super::cache::{room_structures, room_terrain};
 use super::predicates::check_my_structure;
+use crate::mem::MemoryExt;
 use lazy_static::lazy_static;
 use log::*;
 use screeps::local::{RoomName, RoomXY};
@@ -17,6 +18,12 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 const MY_CREEP_COST: u8 = 8;
+
+/// 座り仕事ロール (miner / 専任 upgrader) のいるマスのコスト。
+/// 彼らは待っても退かないので、強めのコストで迂回を促す。
+/// 255 (通行不可) にはしない: 唯一の通路に座られた場合でも経路自体は
+/// 組めるようにし、到達不能扱いで max_ops を使い切るのを避ける。
+const SEATED_CREEP_COST: u8 = 40;
 
 const ROOM_SIZE_X: u8 = 50;
 const ROOM_SIZE_Y: u8 = 50;
@@ -87,16 +94,39 @@ pub fn search_goals<T: HasPosition>(list: &[(T, u32)]) -> Vec<SearchGoal> {
         .collect()
 }
 
+// 完成コスト層 (静的+動的) の tick 内キャッシュ。
+// pathfinder は探索のたびにこのコールバックを呼ぶので、素直に作ると
+// 同 tick 内に creep の数だけ動的層を組み直す。部屋の状態 (creep の位置・
+// 敵) は tick 内では変わらないため、1回組んで使い回す。
+lazy_static! {
+    static ref TICK_CACHE: RwLock<Data> = RwLock::new(HashMap::new());
+}
+
 fn calc_room_cost(room_name: RoomName) -> MultiRoomCostResult {
     let Some(room_obj) = game::rooms().get(room_name) else {
         // 視界の無い部屋は既定コストのまま。
         return MultiRoomCostResult::Default;
     };
 
+    let now = game::time();
+    {
+        let cache = TICK_CACHE.read().unwrap();
+        if let Some((built_at, matrix)) = cache.get(&room_name) {
+            if *built_at == now {
+                return MultiRoomCostResult::CostMatrix(CostMatrix::from(matrix.clone()));
+            }
+        }
+    }
+
     let mut cost_matrix = static_layer(&room_obj, room_name);
 
     // ここから動的層。tick ごとに作り直す。
     apply_dynamic_layer(&room_obj, &mut cost_matrix);
+
+    TICK_CACHE
+        .write()
+        .unwrap()
+        .insert(room_name, (now, cost_matrix.clone()));
 
     MultiRoomCostResult::CostMatrix(CostMatrix::from(cost_matrix))
 }
@@ -207,12 +237,31 @@ fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut Loca
         }
     }
 
-    // creep のいるマス。敵は本当の障害物だが、味方は待てば退く。
+    // creep のいるマス。敵は本当の障害物。味方はロールで扱いを分ける:
+    // - 座り仕事 (miner / 専任 upgrader) は退かないので強い迂回誘導
+    // - 道路上の歩行 creep は素通り扱い。一本道での正面衝突は双方が直進
+    //   すれば同 tick のすれ違い (swap) で解決するのに、コストを載せると
+    //   道路から降りて迂回し、道路特化 body (MOVE 半減) は倍の tick を払う
+    //   (実測: 対向のたびに片方が降りてタイムロス)
+    // - それ以外 (平地の歩行 creep) は従来どおり軽い回避
     for creep in room_obj.find(find::CREEPS, None) {
         if creep.my() {
             let xy = creep.pos().xy();
             let cur = cost_matrix.get(xy);
-            if cur < 0xff {
+            if cur >= 0xff {
+                continue;
+            }
+            let role = creep
+                .memory()
+                .string(crate::mem::keys::ROLE)
+                .ok()
+                .flatten();
+            let seated = role.as_deref().is_some_and(|r| {
+                r == crate::creeps::ROLE_MINER || r == crate::creeps::ROLE_UPGRADER
+            });
+            if seated {
+                cost_matrix.set(xy, cur.max(SEATED_CREEP_COST));
+            } else if !is_road[xy_index(xy)] {
                 cost_matrix.set(xy, cur.max(MY_CREEP_COST));
             }
             continue;
