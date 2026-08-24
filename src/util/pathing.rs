@@ -40,11 +40,15 @@ lazy_static! {
     static ref MAP_CACHE: RwLock<Data> = RwLock::new(HashMap::new());
 }
 
+/// 経路探索の結果に沿って1歩進む。実際の move 発行は tick 末の
+/// resolve_traffic() が行う (交通管理: docs/traffic-design.md)。
+/// 戻り値は呼び出し側 (debugログのみ) との互換のため Result のまま常に Ok。
 pub fn move_by_search_result(
     creep: &screeps::objects::Creep,
     res: &SearchResults,
 ) -> Result<(), screeps::action_error_codes::CreepMoveByPathErrorCode> {
-    creep.move_by_path(res.opaque_path().as_ref())
+    super::traffic::request_move(creep, res);
+    Ok(())
 }
 
 pub fn empty_search(creep: &screeps::objects::Creep) -> SearchResults {

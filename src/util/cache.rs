@@ -184,6 +184,7 @@ pub fn room_structures(room: &screeps::objects::Room) -> Rc<Vec<StructureObject>
 
 pub fn clear_init_flag() {
     crate::creeps::clear_colony_cache();
+    super::traffic::clear_traffic();
     STRUCTURE_CACHE.with(|cache| *cache.borrow_mut() = None);
     ROOM_STRUCTURE_CACHE.with(|cache| cache.borrow_mut().clear());
     HOSTILE_CACHE.with(|cache| cache.borrow_mut().clear());

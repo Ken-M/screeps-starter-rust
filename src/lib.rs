@@ -48,6 +48,9 @@ pub fn game_loop() {
     debug!("running creeps cpu:{}", screeps::game::cpu::get_used());
     creeps::creep_loop();
 
+    // creep_loop で収集した移動意図をまとめて発行する (docs/traffic-design.md)。
+    util::resolve_traffic();
+
     debug!("running towers cpu:{}", screeps::game::cpu::get_used());
     defence::tower::run_tower();
 
