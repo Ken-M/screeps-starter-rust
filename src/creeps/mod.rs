@@ -243,13 +243,17 @@ fn surplus_haulers(state: &ColonyState) -> i32 {
 
 /// 専任 upgrader の上限。
 ///
-/// 収入は source 1本 ≒ 10/tick、upgrader 1体 (WORK 6) の消費は 6/tick なので、
-/// source あたり2体で需要 ≒ 収入。これを超えて置いても補給 container が
-/// 空く時間が延びるだけで進捗は増えず、800 energy の body の量産で
-/// spawn 予算を食い、あぶれた個体が MOVE 1 の鈍足 body で自力調達に出る
-/// (実測: upgrader 8 で progress/tick が健全期の 1/3 に停滞)。
+/// 総収入 (source 1本 ≒ 10/tick) ではなく「補給 container まで実際に届く量」
+/// が制約になる。この部屋は spawn/source 側と controller が岩壁で分断され、
+/// 唯一の通路が西回り約60〜80歩の大迂回路のため、hauler 1体の実効搬入は
+/// 4〜5/tick、spawn/extension との分け合いで stock への定常供給は 4〜10/tick
+/// 程度 (実測: 定常 3.7/tick、滞留食い潰しのバーストで 9.7/tick)。
+/// upgrader 1体 (WORK 6) の消費は 6/tick なので、sources+1 = 3体 (容量
+/// 18/tick) でバースト受け入れの余裕を残しつつ、恒常的に飢える個体
+/// (1世代 800 energy の無駄) を作らない。
+/// 将来: stock の枯渇率を Memory で計測し、供給実測に追従させる。
 fn upgrader_cap(state: &ColonyState) -> i32 {
-    state.total_sources * 2
+    state.total_sources + 1
 }
 
 /// 専任 upgrader の目標数。増員込みの希望数を、収入上限 (upgrader_cap) と
@@ -668,8 +672,8 @@ mod tests {
         let mut st = state(2, false, 0);
         st.has_controller_stock = true;
         let base = target_of(&st, ROLE_UPGRADER);
-        st.energy_backlog = WORKER_SURPLUS_ENERGY_STEP * 2;
-        assert_eq!(target_of(&st, ROLE_UPGRADER), base + 2);
+        st.energy_backlog = WORKER_SURPLUS_ENERGY_STEP;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), base + 1);
     }
 
     #[test]
@@ -689,16 +693,16 @@ mod tests {
     }
 
     #[test]
-    fn upgrader増員は収入上限で頭打ちになり_あふれはworkerへ() {
+    fn upgrader増員は供給上限で頭打ちになり_あふれはworkerへ() {
         let mut st = state(2, false, 0);
         st.has_controller_stock = true;
 
-        // 実測の停滞時を再現: backlog 10k → surplus 6。source 2 の収入は
-        // 20/tick なので upgrader (WORK6) は 4体で需要 ≒ 収入。
+        // 実測の停滞時を再現: backlog 10k → surplus 6。西回り迂回路の
+        // 実効供給では upgrader (WORK6) は sources+1 = 3体が上限。
         st.energy_backlog = 10_000;
-        assert_eq!(target_of(&st, ROLE_UPGRADER), 4);
-        // あふれた4体は worker (基本 3) へ戻る。
-        assert_eq!(target_of(&st, ROLE_WORKER), 3 + 4);
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 3);
+        // あふれた5体は worker (基本 3) へ戻る。
+        assert_eq!(target_of(&st, ROLE_WORKER), 3 + 5);
         // upgrader + worker の合計は上限導入前 (sources*2 + 1 + 増員) と同じ。
         assert_eq!(
             target_of(&st, ROLE_UPGRADER) + target_of(&st, ROLE_WORKER),
