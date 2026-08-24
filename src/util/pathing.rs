@@ -5,7 +5,6 @@
 
 use super::cache::{room_structures, room_terrain};
 use super::predicates::check_my_structure;
-use crate::mem::MemoryExt;
 use lazy_static::lazy_static;
 use log::*;
 use screeps::local::{RoomName, RoomXY};
@@ -251,20 +250,7 @@ fn apply_dynamic_layer(room_obj: &screeps::objects::Room, cost_matrix: &mut Loca
             if cur >= 0xff {
                 continue;
             }
-            let cmem = creep.memory();
-            let seated = match cmem.string(crate::mem::keys::ROLE).ok().flatten().as_deref()
-            {
-                Some(crate::creeps::ROLE_MINER) => {
-                    sources.iter().any(|s| creep.pos().is_near_to(s.pos()))
-                }
-                Some(crate::creeps::ROLE_UPGRADER) => cmem
-                    .string(crate::mem::keys::UPGRADE_SEAT)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|s| s == format!("{},{}", xy.x.u8(), xy.y.u8())),
-                _ => false,
-            };
-            if seated {
+            if super::traffic::is_parked(&creep, &sources) {
                 cost_matrix.set(xy, 0xff);
             } else {
                 cost_matrix.set(xy, cur.max(MY_CREEP_COST));
