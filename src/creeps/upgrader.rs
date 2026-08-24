@@ -94,14 +94,14 @@ fn parse_seat(s: &str, room: &screeps::objects::Room) -> Option<Position> {
     Some(Position::new(xy.x, xy.y, room.name()))
 }
 
-/// 席の有効条件: 今も補給 container の上か隣であること。
+/// 席の有効条件: 今も claim 可能な席の一覧に載っていること。
+/// 一覧の方が変わった場合 (道路の敷設・レーン予約の変化など) は
+/// 旧ルールで取った席も無効になり、選び直しで自然に解放される。
 fn seat_valid(room: &screeps::objects::Room, pos: Position) -> bool {
-    room_structures(room)
-        .iter()
-        .any(|s| is_controller_stock(s) && pos.get_range_to(s.pos()) <= 1)
+    pos.room_name() == room.name() && claimable_seats(room).contains(&pos.xy())
 }
 
-/// 空いている席を選ぶ。候補は補給 container の上と隣接8マス
+/// claim してよい席の一覧。候補は補給 container の上と隣接8マス
 /// (container は controller の range 2 以内なので、どの候補も
 /// range 3 の upgrade 射程に収まる)。
 ///
@@ -109,15 +109,9 @@ fn seat_valid(room: &screeps::objects::Room, pos: Position) -> bool {
 /// hauler が搬入できず、補給網ごと止まる (実測: 歩けるマス4つ全てに
 /// 座られて搬入不能になり、backlog が発散した)。道路マスは常にレーン。
 /// 道路が無い場合も、決定的に選んだ1マスをレーンとして空けておく。
-fn pick_seat(creep: &Creep, room: &screeps::objects::Room) -> Option<Position> {
-    // 他の生存 upgrader が claim 済みの席。Memory への書き込みは同 tick 内
-    // でも見えるので、複数が同時に選んでも早い者勝ちで重複しない。
-    let taken: Vec<String> = game::creeps()
-        .values()
-        .filter(|c| c.name() != creep.name())
-        .filter_map(|c| c.memory().string(keys::UPGRADE_SEAT).ok().flatten())
-        .collect();
-
+///
+/// spawn 側もこれを上限に upgrader の目標数を決める (席より多く作らない)。
+pub fn claimable_seats(room: &screeps::objects::Room) -> Vec<RoomXY> {
     let mut candidates: Vec<RoomXY> = vec![];
     let mut has_road_lane = false;
     for structure in room_structures(room).iter() {
@@ -155,9 +149,21 @@ fn pick_seat(creep: &Creep, room: &screeps::objects::Room) -> Option<Position> {
         candidates.sort_by_key(|xy| (xy.y.u8(), xy.x.u8()));
         candidates.pop();
     }
+    candidates
+}
+
+/// 空いている席を選ぶ。
+fn pick_seat(creep: &Creep, room: &screeps::objects::Room) -> Option<Position> {
+    // 他の生存 upgrader が claim 済みの席。Memory への書き込みは同 tick 内
+    // でも見えるので、複数が同時に選んでも早い者勝ちで重複しない。
+    let taken: Vec<String> = game::creeps()
+        .values()
+        .filter(|c| c.name() != creep.name())
+        .filter_map(|c| c.memory().string(keys::UPGRADE_SEAT).ok().flatten())
+        .collect();
 
     let mut best: Option<(u32, Position)> = None;
-    for xy in candidates {
+    for xy in claimable_seats(room) {
         if taken.contains(&format!("{},{}", xy.x.u8(), xy.y.u8())) {
             continue;
         }

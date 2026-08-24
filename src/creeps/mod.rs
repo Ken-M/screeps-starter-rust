@@ -92,6 +92,10 @@ pub struct ColonyState {
     /// controller 脇の補給 container があるか。専任 upgrader
     /// (座って WORK 全振り) はこれが前提。
     pub has_controller_stock: bool,
+    /// 専任 upgrader が claim できる席の総数 (搬入レーンを除いた
+    /// container 周りの歩けるマス)。席より多く作っても座れずに
+    /// container 周りを徘徊して搬入を妨げるだけなので、目標の上限になる。
+    pub upgrader_seats: i32,
 }
 
 thread_local! {
@@ -127,8 +131,10 @@ impl ColonyState {
         let mut energy_backlog = 0;
         let mut total_roads = 0usize;
         let mut has_controller_stock = false;
+        let mut upgrader_seats = 0;
 
         for room in game::rooms().values() {
+            upgrader_seats += upgrader::claimable_seats(&room).len() as i32;
             if room.terminal().is_some() {
                 has_terminal = true;
             }
@@ -206,6 +212,7 @@ impl ColonyState {
             energy_backlog,
             has_road_network: total_roads >= ROAD_NETWORK_MIN,
             has_controller_stock,
+            upgrader_seats,
         }
     }
 }
@@ -245,6 +252,18 @@ fn upgrader_cap(state: &ColonyState) -> i32 {
     state.total_sources * 2
 }
 
+/// 専任 upgrader の目標数。増員込みの希望数を、収入上限 (upgrader_cap) と
+/// 席数 (claimable_seats) の両方で頭打ちにする。席より多く作ると、座れない
+/// 個体が container 周りを徘徊して搬入を妨げる。
+fn upgrader_target(state: &ColonyState) -> i32 {
+    if !state.has_controller_stock {
+        return 0;
+    }
+    (state.total_sources + surplus_workers(state))
+        .min(upgrader_cap(state))
+        .min(state.upgrader_seats)
+}
+
 /// 目標のロール構成。優先度の高い順に並べる。
 ///
 /// 目標は creep 総数の比率ではなく、コロニーの構造 (source 数・敵の有無・
@@ -270,15 +289,8 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
         // 専任アップグレード係。controller 脇の補給 container の隣に座り、
         // withdraw と upgrade を同 tick に併用して WORK 全振り body を回す。
         // container が無いうちは 0 (worker の名前パリティ傾斜が代替)。
-        // 増員は収入連動の上限 (upgrader_cap) で頭打ちにする。
-        (
-            ROLE_UPGRADER,
-            if state.has_controller_stock {
-                (state.total_sources + surplus_workers(state)).min(upgrader_cap(state))
-            } else {
-                0
-            },
-        ),
+        // 増員は収入上限と席数で頭打ち (詳細は upgrader_target)。
+        (ROLE_UPGRADER, upgrader_target(state)),
         // 汎用労働力 (建設・修理、暇ならアップグレード)。
         // 専任 upgrader が立っている間はその分を差し引き、upgrader の上限から
         // あふれた増員分はこちらへ戻す (機動力があり建設・修理もこなすので、
@@ -287,9 +299,8 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
         (
             ROLE_WORKER,
             if state.has_controller_stock {
-                let overflow = (state.total_sources + surplus_workers(state)
-                    - upgrader_cap(state))
-                .max(0);
+                let overflow =
+                    state.total_sources + surplus_workers(state) - upgrader_target(state);
                 state.total_sources + 1 + overflow
             } else {
                 state.total_sources * 2 + 1 + surplus_workers(state)
@@ -629,6 +640,8 @@ mod tests {
             energy_backlog: 0,
             has_road_network: false,
             has_controller_stock: false,
+            // 既定は席数が制約にならない値。席の制約は専用のテストで見る。
+            upgrader_seats: 8,
         }
     }
 
@@ -656,6 +669,22 @@ mod tests {
         let base = target_of(&st, ROLE_UPGRADER);
         st.energy_backlog = WORKER_SURPLUS_ENERGY_STEP * 2;
         assert_eq!(target_of(&st, ROLE_UPGRADER), base + 2);
+    }
+
+    #[test]
+    fn upgraderは席数を超えて作らない() {
+        let mut st = state(2, false, 0);
+        st.has_controller_stock = true;
+        st.energy_backlog = 10_000; // surplus 6 → 希望 8, 収入上限 4
+
+        // 実測の詰まり時を再現: 歩けるマス4つ − 搬入レーン1 = 席3。
+        st.upgrader_seats = 3;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 3);
+        // 席からあふれた分も worker へ。合計は不変。
+        assert_eq!(
+            target_of(&st, ROLE_UPGRADER) + target_of(&st, ROLE_WORKER),
+            2 * 2 + 1 + 6
+        );
     }
 
     #[test]
