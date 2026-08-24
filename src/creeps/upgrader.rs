@@ -39,13 +39,14 @@ pub fn run_dedicated_upgrader(creep: &Creep) {
             return;
         }
         let res = find_path(creep, &seat, 0);
-        if !res.path().is_empty() {
+        if !res.path().is_empty() && !res.incomplete() {
             let _ = move_by_search_result(creep, &res);
             // 席へ移動中でも射程内なら同 tick に upgrade できる (別枠アクション)。
             try_upgrade(creep);
             return;
         }
-        // 席まで詰まっている。以下の通常動作で射程内に留まる。
+        // 席まで詰まっている (incomplete = 経路が組めない)。
+        // 以下の通常動作で射程内に留まり、手持ちで upgrade を続ける。
     }
 
     run_upgrader(creep);
@@ -103,7 +104,11 @@ fn seat_valid(room: &screeps::objects::Room, pos: Position) -> bool {
 /// 空いている席を選ぶ。候補は補給 container の上と隣接8マス
 /// (container は controller の range 2 以内なので、どの候補も
 /// range 3 の upgrade 射程に収まる)。
-/// 道路上の席は最後の手段: 道路は輸送の幹線で、座ると対向をブロックする。
+///
+/// 搬入レーンは席にしない: 席が container の歩けるマスを全部塞ぐと
+/// hauler が搬入できず、補給網ごと止まる (実測: 歩けるマス4つ全てに
+/// 座られて搬入不能になり、backlog が発散した)。道路マスは常にレーン。
+/// 道路が無い場合も、決定的に選んだ1マスをレーンとして空けておく。
 fn pick_seat(creep: &Creep, room: &screeps::objects::Room) -> Option<Position> {
     // 他の生存 upgrader が claim 済みの席。Memory への書き込みは同 tick 内
     // でも見えるので、複数が同時に選んでも早い者勝ちで重複しない。
@@ -113,7 +118,8 @@ fn pick_seat(creep: &Creep, room: &screeps::objects::Room) -> Option<Position> {
         .filter_map(|c| c.memory().string(keys::UPGRADE_SEAT).ok().flatten())
         .collect();
 
-    let mut best: Option<(bool, u32, Position)> = None;
+    let mut candidates: Vec<RoomXY> = vec![];
+    let mut has_road_lane = false;
     for structure in room_structures(room).iter() {
         if !is_controller_stock(structure) {
             continue;
@@ -132,22 +138,36 @@ fn pick_seat(creep: &Creep, room: &screeps::objects::Room) -> Option<Position> {
                 if !is_walkable_tile(room, xy) {
                     continue;
                 }
-                if taken.contains(&format!("{},{}", x, y)) {
+                if tile_has_road(room, xy) {
+                    has_road_lane = true;
                     continue;
                 }
-                let pos = Position::new(xy.x, xy.y, room.name());
-                let road = tile_has_road(room, xy);
-                let dist = creep.pos().get_range_to(pos);
-                if best
-                    .as_ref()
-                    .is_none_or(|(b_road, b_dist, _)| (road, dist) < (*b_road, *b_dist))
-                {
-                    best = Some((road, dist, pos));
+                if !candidates.contains(&xy) {
+                    candidates.push(xy);
                 }
             }
         }
     }
-    best.map(|(_, _, pos)| pos)
+
+    // 道路レーンが無ければ1マスを予約する。全 upgrader が同じ判断を
+    // するよう座標順で決める (creep の位置に依存させない)。
+    if !has_road_lane && candidates.len() > 1 {
+        candidates.sort_by_key(|xy| (xy.y.u8(), xy.x.u8()));
+        candidates.pop();
+    }
+
+    let mut best: Option<(u32, Position)> = None;
+    for xy in candidates {
+        if taken.contains(&format!("{},{}", xy.x.u8(), xy.y.u8())) {
+            continue;
+        }
+        let pos = Position::new(xy.x, xy.y, room.name());
+        let dist = creep.pos().get_range_to(pos);
+        if best.as_ref().is_none_or(|(b_dist, _)| dist < *b_dist) {
+            best = Some((dist, pos));
+        }
+    }
+    best.map(|(_, pos)| pos)
 }
 
 /// 隣接する controller 脇の補給 container から手持ちを補充する。

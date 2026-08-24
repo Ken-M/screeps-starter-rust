@@ -348,7 +348,10 @@ fn deliver_controller_stock(creep: &Creep, room: &screeps::objects::Room) -> boo
             continue;
         }
         let res = find_path(creep, &structure.pos(), 1);
-        if !res.path().is_empty() {
+        // incomplete = 隣接マスへ到達する経路が組めない (席に囲まれている等)。
+        // 届かない container を追いかけて他の配達先を放置すると物流ごと
+        // 止まるので、この container は諦めて次の配達先へ譲る。
+        if !res.path().is_empty() && !res.incomplete() {
             let _ = move_by_search_result(creep, &res);
             return true;
         }
