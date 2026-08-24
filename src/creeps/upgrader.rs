@@ -17,23 +17,19 @@ pub fn run_dedicated_upgrader(creep: &Creep) {
         return;
     };
 
-    // 空荷なら調達から。補給 container を含む最寄りの貯蔵へ。
-    if creep
-        .store()
-        .get_used_capacity(Some(ResourceType::Energy))
-        == 0
-    {
-        super::hauler::collect_energy(creep, &room, true);
-        return;
-    }
-
-    // 隣の補給 container から継ぎ足す (upgrade と同 tick に併用可)。
-    top_up_from_stock(creep, &room);
-
     // 指定席方式 (miner の MINE_AT と同じ粘着)。席が無いと container の
     // 周りに無秩序に集まり、悪い位置取りの1体が他の進入経路を塞ぐ
     // (実測: 席未定の upgrader どうしが道を融通し合えず滞留)。
+    //
+    // 空荷でも席を離れて調達には行かない: この body (MOVE 1) は平地1歩に
+    // 8 tick かかり、source まで往復すると CARRY 2 = 100 energy のために
+    // 寿命の1〜2割を溶かす (実測: 全 upgrader が空荷で徘徊し、在庫 1500 の
+    // 補給 container が放置されていた)。エネルギーは hauler が席の隣へ
+    // 届けるので、在庫切れの間も席で待つ方が安い。
     if let Some(seat) = resolve_seat(creep, &room) {
+        // 隣の補給 container から継ぎ足す (upgrade と同 tick に併用可)。
+        top_up_from_stock(creep, &room);
+
         if creep.pos() == seat {
             try_upgrade(creep);
             return;
@@ -47,6 +43,16 @@ pub fn run_dedicated_upgrader(creep: &Creep) {
         }
         // 席まで詰まっている (incomplete = 経路が組めない)。
         // 以下の通常動作で射程内に留まり、手持ちで upgrade を続ける。
+    }
+
+    // 席が無い (補給 container 未整備・席満杯)。従来の徘徊型として働く。
+    if creep
+        .store()
+        .get_used_capacity(Some(ResourceType::Energy))
+        == 0
+    {
+        super::hauler::collect_energy(creep, &room, true);
+        return;
     }
 
     run_upgrader(creep);
