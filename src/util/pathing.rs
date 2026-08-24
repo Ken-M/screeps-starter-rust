@@ -74,9 +74,12 @@ pub fn default_search_options() -> SearchOptions<fn(RoomName) -> MultiRoomCostRe
     SearchOptions::new(calc_room_cost as fn(RoomName) -> MultiRoomCostResult)
         .plain_cost(2)
         .swamp_cost(10)
-        // 既定は 2000。到達不能なゴールを狙うと毎回これを使い切るので絞る。
-        // 1部屋内の移動なら 500 で十分足りる。
-        .max_ops(500)
+        // エンジン既定の 2000。以前は「1部屋内なら500で十分」と絞っていたが、
+        // 着席 creep の通行不可 (0xff) クラスタをゴール近傍で迂回する探索は
+        // 実測 825 ops を要し、500 では incomplete になって hauler が補給
+        // container への配送を全部諦める障害を起こした (progress 完全凍結)。
+        // ゴールに到達できる探索は必要分しか消費しないので、予算は既定に戻す。
+        .max_ops(2000)
         // 既定は 16 部屋。この AI は隣接部屋までしか扱わない。
         .max_rooms(2)
         // plain_cost を 2 にしているのに既定の 1.2 のままだと、ヒューリスティックが
