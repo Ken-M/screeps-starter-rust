@@ -775,6 +775,16 @@ fn plan_roads(
     if let Some(c) = room.controller() {
         goals.push(c.pos());
     }
+    // controller 脇の補給 container へも幹線を引き切る。hauler の主要な
+    // 配送先で交通量が多いのに、controller までの道は袋小路の入り口で
+    // 止まっていた (実測: 補給 container の周囲に道路ゼロ)。舗装すれば
+    // 道路特化 body の配送が倍速になる上、道路マスは upgrader の席に
+    // ならないので搬入レーンが恒久的に確保される。
+    for s in room_structures(room).iter() {
+        if is_controller_stock(s) {
+            goals.push(s.pos());
+        }
+    }
 
     for goal in goals {
         if *budget == 0 {
