@@ -764,6 +764,40 @@ fn best_ring_tile(
     best.map(|(_, xy)| xy)
 }
 
+/// 道路計画用のコスト関数。通行不可の建造物を避け、既存の道路を辿らせる。
+/// 交通管理側の `default_search_options` と違い creep は見ない (計画は
+/// その瞬間の混み具合に影響されるべきではないため)。
+fn road_plan_cost(room_name: screeps::RoomName) -> pathfinder::MultiRoomCostResult {
+    let Some(room) = game::rooms().get(room_name) else {
+        return pathfinder::MultiRoomCostResult::Default;
+    };
+    let mut cost = screeps::LocalCostMatrix::default();
+    for s in room_structures(&room).iter() {
+        let xy = s.pos().xy();
+        match s.structure_type() {
+            // 既存の幹線に寄せる。
+            StructureType::Road => cost.set(xy, 1),
+            // 上を歩ける建造物。
+            StructureType::Container => {}
+            StructureType::Rampart => {
+                if !crate::util::check_my_structure(s) {
+                    cost.set(xy, 0xff);
+                }
+            }
+            _ => cost.set(xy, 0xff),
+        }
+    }
+    for site in room.find(find::MY_CONSTRUCTION_SITES, None) {
+        if !matches!(
+            site.structure_type(),
+            StructureType::Road | StructureType::Container | StructureType::Rampart
+        ) {
+            cost.set(site.pos().xy(), 0xff);
+        }
+    }
+    pathfinder::MultiRoomCostResult::CostMatrix(screeps::CostMatrix::from(cost))
+}
+
 fn plan_roads(
     room: &Room,
     spawn_pos: Position,
@@ -791,11 +825,18 @@ fn plan_roads(
             return;
         }
 
-        let opts = pathfinder::SearchOptions::new(|_: screeps::RoomName| {
-            pathfinder::MultiRoomCostResult::Default
-        })
-        .max_ops(2000)
-        .max_rooms(1);
+        // 既存の建造物を考慮した経路で計画する。
+        //
+        // 以前は Default (地形のみ) で引いていたため、extension や tower の
+        // 上を貫通する「実際には歩けない経路」が出ていた。その部分は
+        // blocked_tiles に入っていて道路が置かれないので、幹線が
+        // ところどころ途切れる (実測: spawn 周りの extension 群で分断され、
+        // (41,19) から先が spawn に繋がっていなかった)。
+        // 併せて既存の道路をコスト1にして、経路が毎回同じ線に落ちるようにする
+        // (経路がぶれると計画が散らばって、どの線も繋がらない)。
+        let opts = pathfinder::SearchOptions::new(road_plan_cost)
+            .max_ops(2000)
+            .max_rooms(1);
 
         let res = pathfinder::search(spawn_pos, goal, 1, Some(opts));
         if res.incomplete() {
