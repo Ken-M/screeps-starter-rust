@@ -295,7 +295,12 @@ pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
     // 実測: container 2000×2 が満杯なのに spawn 136/300 で生産不能のまま
     // 毎tick+1 の自然回復を待っていた。hauler を1体出せば在庫を spawn へ
     // 運べて一気に立ち直る。
-    if state.economy_collapsed() && state.energy_backlog > 0 {
+    //
+    // 先頭へ出すのは運搬がゼロの間だけ。1体でも走り出したら通常の並びに
+    // 戻して採掘を立てる。滞留在庫は有限なので、運搬だけ揃えても掘る手が
+    // 無ければ在庫を食い潰して再び詰む (実測: hauler を3体続けて生産し、
+    // miner が1体も立たないまま backlog が減り続けた)。
+    if state.economy_collapsed() && state.energy_backlog > 0 && state.num_haulers == 0 {
         if let Some(pos) = targets.iter().position(|(r, _)| *r == ROLE_HAULER) {
             let hauler = targets.remove(pos);
             targets.insert(0, hauler);
@@ -826,6 +831,13 @@ mod tests {
 
         // 在庫が無ければ運搬を優先しても意味がないので平時の並び。
         st.energy_backlog = 0;
+        assert_eq!(role_targets(&st)[1].0, ROLE_MINER);
+
+        // 運搬が1体でも走り出したら採掘を立てる番。滞留在庫は有限なので、
+        // 運搬だけ揃えても掘る手が無ければ在庫を食い潰して再び詰む。
+        st.energy_backlog = 4000;
+        st.num_haulers = 1;
+        assert!(st.economy_collapsed());
         assert_eq!(role_targets(&st)[1].0, ROLE_MINER);
     }
 
