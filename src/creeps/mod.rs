@@ -284,6 +284,28 @@ fn upgrader_target(state: &ColonyState) -> i32 {
 /// 施設の有無) から決める。総数比だと「総数が目標を決め、目標が総数を決める」
 /// 循環になり、人口の上限が恣意的な定数に縛られる。
 pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
+    let mut targets = base_role_targets(state);
+
+    // 経済壊滅からの復旧は、滞留在庫があるなら運搬から始める。
+    //
+    // 目標の並びは spawn の生産順でもある (most_needed_role は先頭から
+    // 最初の不足を返す)。平時は miner が先で正しいが、崩壊時は逆効果:
+    // miner の最小 body は 200、hauler は 100 なので、細い自然回復では
+    // miner に届くまで何も作れない。しかも掘っても運ぶ手が無い。
+    // 実測: container 2000×2 が満杯なのに spawn 136/300 で生産不能のまま
+    // 毎tick+1 の自然回復を待っていた。hauler を1体出せば在庫を spawn へ
+    // 運べて一気に立ち直る。
+    if state.economy_collapsed() && state.energy_backlog > 0 {
+        if let Some(pos) = targets.iter().position(|(r, _)| *r == ROLE_HAULER) {
+            let hauler = targets.remove(pos);
+            targets.insert(0, hauler);
+        }
+    }
+
+    targets
+}
+
+fn base_role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
     vec![
         // 防衛。攻撃能力を持つ敵がいるときだけ。何より優先する。
         //
@@ -782,6 +804,29 @@ mod tests {
     fn 敵がいれば防衛が立ち_最優先に並ぶ() {
         let targets = role_targets(&state(2, true, 0));
         assert_eq!(targets[0], (ROLE_DEFENDER, 2));
+    }
+
+    #[test]
+    fn 経済壊滅時に在庫があれば運搬を最優先で生産する() {
+        let mut st = state(2, false, 0);
+        // 平時は miner が先 (defender は敵不在で0だが並びの先頭)。
+        assert_eq!(role_targets(&st)[1].0, ROLE_MINER);
+
+        // 崩壊 + 在庫あり → hauler が先頭。container の在庫を spawn へ
+        // 運べば立ち直るが、miner を先に作っても運ぶ手が無い。
+        st.num_haulers = 0;
+        st.energy_backlog = 4000;
+        assert_eq!(role_targets(&st)[0].0, ROLE_HAULER);
+        // 並べ替えるだけで、目標値の集合そのものは変えない。
+        let mut reordered = role_targets(&st);
+        let mut base = base_role_targets(&st);
+        reordered.sort();
+        base.sort();
+        assert_eq!(reordered, base);
+
+        // 在庫が無ければ運搬を優先しても意味がないので平時の並び。
+        st.energy_backlog = 0;
+        assert_eq!(role_targets(&st)[1].0, ROLE_MINER);
     }
 
     #[test]
