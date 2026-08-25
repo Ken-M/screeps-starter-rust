@@ -55,3 +55,4 @@ screeps.toml
 # Captured game logs #
 #######################
 logs/
+js_tools/_*.tmp.js
