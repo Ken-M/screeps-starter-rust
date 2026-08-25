@@ -57,12 +57,17 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
         return;
     }
 
-    // controller 脇の補給 container がまだ無い部屋では、worker の約半数を
-    // アップグレードに回す (RCL3 到達で傾斜が切れて進捗がほぼ止まった実測
-    // 1.2 progress/tick の再発防止)。container が立てば専任 upgrader ロール
-    // (WORK 全振り body) がこの傾斜を引き継ぐので、worker は建設・修理に戻る。
+    // 専任 upgrader が立っていない部屋では、worker の約半数をアップグレードに
+    // 回す (RCL3 到達で傾斜が切れて進捗がほぼ止まった実測 1.2 progress/tick の
+    // 再発防止)。専任が立てば向こうが引き継ぐので、worker は建設・修理に戻る。
     // 名前のハッシュで決めるので、指名は creep の生涯を通じて安定する。
-    if !super::ColonyState::observe().has_controller_stock && name_parity(creep) {
+    //
+    // 判定に補給 container の有無ではなく専任の目標数を使うのは、container は
+    // あるのに補給が届かず専任が 0 になる部屋があるため。実測: container 是り・
+    // 在庫ゼロで専任 0 のとき、この傾斜が切れたまま worker 10体が rampart の
+    // decay 修理に張り付き、誰も upgrade せず進捗が 800/h まで落ちた
+    // (worker 主体で回っていた頃は 4600/h)。
+    if super::upgrader_target(&super::ColonyState::observe()) == 0 && name_parity(creep) {
         super::upgrader::run_upgrader(creep);
         return;
     }

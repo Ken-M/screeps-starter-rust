@@ -302,7 +302,7 @@ const UPGRADER_STOCK_PER_HEAD: i32 = 840;
 /// 自分で container から汲めるので、遠い controller でも仕事になる。
 /// 在庫が積み上がる部屋 (storage 持ち・controller が近い部屋) では
 /// 自然に専任が復活する。
-fn upgrader_target(state: &ColonyState) -> i32 {
+pub(super) fn upgrader_target(state: &ColonyState) -> i32 {
     if !state.has_controller_stock {
         return 0;
     }
