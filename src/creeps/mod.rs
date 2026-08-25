@@ -96,6 +96,10 @@ pub struct ColonyState {
     /// container 周りの歩けるマス)。席より多く作っても座れずに
     /// container 周りを徘徊して搬入を妨げるだけなので、目標の上限になる。
     pub upgrader_seats: i32,
+    /// controller 脇の補給 container に実際に入っているエネルギー。
+    /// 専任 upgrader は席で待つ設計なので、届かない部屋に置いても
+    /// 遊ばせるだけになる。目標数はここから決める。
+    pub controller_stock_energy: i32,
 }
 
 thread_local! {
@@ -142,6 +146,7 @@ impl ColonyState {
         let mut total_roads = 0usize;
         let mut has_controller_stock = false;
         let mut upgrader_seats = 0;
+        let mut controller_stock_energy = 0;
 
         for room in game::rooms().values() {
             upgrader_seats += upgrader::claimable_seats(&room).len() as i32;
@@ -162,6 +167,12 @@ impl ColonyState {
                         }
                         if is_controller_stock(structure) {
                             has_controller_stock = true;
+                            if let Some(store) = structure.as_has_store() {
+                                controller_stock_energy += store
+                                    .store()
+                                    .get_used_capacity(Some(screeps::ResourceType::Energy))
+                                    as i32;
+                            }
                         }
                     }
                     _ => {}
@@ -223,6 +234,7 @@ impl ColonyState {
             has_road_network: total_roads >= ROAD_NETWORK_MIN,
             has_controller_stock,
             upgrader_seats,
+            controller_stock_energy,
         }
     }
 }
@@ -271,16 +283,34 @@ fn upgrader_cap(state: &ColonyState) -> i32 {
     state.total_sources + 1
 }
 
-/// 専任 upgrader の目標数。増員込みの希望数を、収入上限 (upgrader_cap) と
-/// 席数 (claimable_seats) の両方で頭打ちにする。席より多く作ると、座れない
-/// 個体が container 周りを徘徊して搬入を妨げる。
+/// 専任 upgrader 1体を1往復ぶん養うのに要る補給 container の在庫。
+///
+/// upgrader (WORK6) は 6/tick 消費する。hauler の往復はこの部屋で約 140 tick
+/// なので、次の配達まで持たせるには 840 要る。これを下回る在庫しか無い
+/// 部屋では専任を置いても席で干上がるだけになる。
+const UPGRADER_STOCK_PER_HEAD: i32 = 840;
+
+/// 専任 upgrader の目標数。
+///
+/// 「補給 container に実際に届いている量」で決める。席数や収入で上限を
+/// 掛けるだけでは足りなかった: この部屋は controller が岩壁で分断され、
+/// hauler が spawn / extension / tower を満たすと stock まで回らない。
+/// 結果 stock は 0/2000 のまま upgrader 3体が席で待ち続け、進捗が
+/// worker 主体だった頃の 1/6 (4600/h → 700/h) に落ちた。
+///
+/// 在庫が無ければ 0 にして worker に任せる。worker は MOVE を積んでいて
+/// 自分で container から汲めるので、遠い controller でも仕事になる。
+/// 在庫が積み上がる部屋 (storage 持ち・controller が近い部屋) では
+/// 自然に専任が復活する。
 fn upgrader_target(state: &ColonyState) -> i32 {
     if !state.has_controller_stock {
         return 0;
     }
+    let sustainable = state.controller_stock_energy / UPGRADER_STOCK_PER_HEAD;
     (state.total_sources + surplus_workers(state))
         .min(upgrader_cap(state))
         .min(state.upgrader_seats)
+        .min(sustainable)
 }
 
 /// 目標のロール構成。優先度の高い順に並べる。
@@ -715,6 +745,9 @@ mod tests {
             has_controller_stock: false,
             // 既定は席数が制約にならない値。席の制約は専用のテストで見る。
             upgrader_seats: 8,
+            // 既定は在庫が制約にならない値 (満杯の container 相当)。
+            // 在庫による制限は専用のテストで見る。
+            controller_stock_energy: 100_000,
         }
     }
 
@@ -742,6 +775,30 @@ mod tests {
         let base = target_of(&st, ROLE_UPGRADER);
         st.energy_backlog = WORKER_SURPLUS_ENERGY_STEP;
         assert_eq!(target_of(&st, ROLE_UPGRADER), base + 1);
+    }
+
+    #[test]
+    fn 補給が届かない部屋では専任upgraderを置かない() {
+        let mut st = state(2, false, 0);
+        st.has_controller_stock = true;
+        st.energy_backlog = 10_000;
+
+        // 在庫が潤沢なら通常どおり専任が立つ。
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 3);
+
+        // 実測の状況: container はあるが hauler が回らず在庫ゼロ。
+        // 席で干上がるだけなので置かない。
+        st.controller_stock_energy = 0;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 0);
+        // 浮いた分は worker へ。人口合計は変わらない。
+        assert_eq!(
+            target_of(&st, ROLE_UPGRADER) + target_of(&st, ROLE_WORKER),
+            2 * 2 + 1 + 6
+        );
+
+        // 1体を1往復養える量が貯まれば1体だけ復活する。
+        st.controller_stock_energy = UPGRADER_STOCK_PER_HEAD;
+        assert_eq!(target_of(&st, ROLE_UPGRADER), 1);
     }
 
     #[test]
