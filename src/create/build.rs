@@ -119,6 +119,22 @@ fn plan_room(room: &Room) {
         }
     }
 
+    let Some(spawn_pos) = room.find(find::MY_SPAWNS, None).first().map(|s| s.pos()) else {
+        return;
+    };
+
+    // --- 1.8. spawn から出る幹線の起点 ---
+    // 拠点の増築より先に、spawn と既存の道路網を繋ぐ道を確保する。
+    //
+    // 道路は従来いちばん最後 (§5) にあり、RCL が上がって extension の枠が
+    // 増えるたびに予算を食われて後回しになり続けていた。実測: 道路102本が
+    // spawn から完全に孤立したまま、道路の建設サイトが1件も立たない状態が
+    // 続いた。その間も body は道路前提 (MOVE 半分) のままなので、全員が
+    // 平地を倍の fatigue で歩くことになる。繋がるまでは最優先で通す。
+    if budget > 0 && !crate::creeps::ColonyState::observe().has_road_network {
+        plan_roads(room, spawn_pos, &blocked, &mut budget, &mut placed_now);
+    }
+
     // --- 2. 拠点まわりの建物 ---
     // 優先度順。上限に達していない最初の種類を1つずつ置く。
     let base_plan: [(StructureType, u32); 5] = [
@@ -128,10 +144,6 @@ fn plan_room(room: &Room) {
         (StructureType::Terminal, allowed(StructureType::Terminal, rcl)),
         (StructureType::Link, allowed(StructureType::Link, rcl)),
     ];
-
-    let Some(spawn_pos) = room.find(find::MY_SPAWNS, None).first().map(|s| s.pos()) else {
-        return;
-    };
 
     for (ty, limit) in base_plan.iter() {
         if budget == 0 {

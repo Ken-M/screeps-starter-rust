@@ -47,9 +47,15 @@ const ROLE_REBALANCE_PER_TICK: i32 = 1;
 /// miner は MOVE 1 なので4倍遅い) + 余裕。
 pub const MINER_PRESPAWN_LEAD: u32 = 250;
 
-/// 部屋の道路がこの本数以上なら「道路網あり」とみなす。
+/// spawn から繋がった道路がこの本数以上なら「道路網あり」とみなす。
 /// 幹線 (spawn⇄source⇄controller) の舗装がおおむね完了する本数。
 /// body の MOVE 比率の切り替えと hauler の目標数に使う。
+///
+/// **spawn から辿れる本数**で数えること。部屋の総数で判定すると、spawn の
+/// 周りが extension で囲まれて出口の道路が1本も無い状態でも「道路網あり」に
+/// なる。実測: 道路102本が全て spawn から孤立していたのに true と判定され、
+/// MOVE 半分の body (CARRY2:MOVE1) で全員が平地を歩いていた。道路前提の
+/// body は平地では fatigue が倍かかるので、移動速度が本来の半分になる。
 pub const ROAD_NETWORK_MIN: usize = 20;
 
 /// 滞留エネルギーがこの量を超えるごとに worker を1体追加する。
@@ -113,6 +119,56 @@ pub fn clear_colony_cache() {
     COLONY_CACHE.with(|c| *c.borrow_mut() = None);
 }
 
+/// spawn から道路だけを辿って到達できる道路の本数。
+///
+/// 総数ではなく連結成分で数える理由は ROAD_NETWORK_MIN のコメントを参照。
+/// 単純な 8近傍 BFS で、道路の本数に比例したコストしかかからない
+/// (ColonyState は tick 内キャッシュされるので 1回/tick)。
+fn connected_road_count(room: &screeps::objects::Room) -> usize {
+    use std::collections::HashSet;
+
+    let mut roads: HashSet<(u8, u8)> = HashSet::new();
+    for s in room_structures(room).iter() {
+        if s.structure_type() == screeps::StructureType::Road {
+            let p = s.pos();
+            roads.insert((p.x().u8(), p.y().u8()));
+        }
+    }
+    if roads.is_empty() {
+        return 0;
+    }
+
+    let mut seen: HashSet<(u8, u8)> = HashSet::new();
+    let mut queue: Vec<(u8, u8)> = Vec::new();
+    let push_neighbors = |x: u8, y: u8, seen: &mut HashSet<(u8, u8)>, q: &mut Vec<(u8, u8)>| {
+        for dx in -1..=1i16 {
+            for dy in -1..=1i16 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let (nx, ny) = (x as i16 + dx, y as i16 + dy);
+                if !(0..50).contains(&nx) || !(0..50).contains(&ny) {
+                    continue;
+                }
+                let t = (nx as u8, ny as u8);
+                if roads.contains(&t) && seen.insert(t) {
+                    q.push(t);
+                }
+            }
+        }
+    };
+
+    // 起点は spawn に隣接する道路。
+    for spawn in room.find(screeps::find::MY_SPAWNS, None).iter() {
+        let p = spawn.pos();
+        push_neighbors(p.x().u8(), p.y().u8(), &mut seen, &mut queue);
+    }
+    while let Some((x, y)) = queue.pop() {
+        push_neighbors(x, y, &mut seen, &mut queue);
+    }
+    seen.len()
+}
+
 impl ColonyState {
     /// 経済が壊滅しているか (採掘か運搬のどちらかが途絶えた)。
     ///
@@ -150,6 +206,7 @@ impl ColonyState {
 
         for room in game::rooms().values() {
             upgrader_seats += upgrader::claimable_seats(&room).len() as i32;
+            total_roads += connected_road_count(&room);
             if room.terminal().is_some() {
                 has_terminal = true;
             }
@@ -157,7 +214,6 @@ impl ColonyState {
             for structure in room_structures(&room).iter() {
                 match structure.structure_type() {
                     screeps::StructureType::Extractor => has_extractor = true,
-                    screeps::StructureType::Road => total_roads += 1,
                     screeps::StructureType::Container | screeps::StructureType::Storage => {
                         if let Some(store) = structure.as_has_store() {
                             energy_backlog += store
