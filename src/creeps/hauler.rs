@@ -5,10 +5,10 @@
 //! 採掘を静的採掘者に任せた分、運搬者は WORK を持たずに済む。同じエネルギー予算で
 //! CARRY と MOVE だけを積めるので、1体あたりの輸送量が増える。
 //!
-//! 配達先の優先順は spawn (生産の要) → tower (防衛の要) → extension →
-//! controller 脇の補給 container → storage。ただし補給 container が
-//! 枯れかけのときだけ extension より前に割り込む (専任 upgrader を
-//! 止めないため)。
+//! 配達先の優先順は spawn (生産の要) → tower (迎撃分 300 まで) →
+//! extension → tower (満タンまで) → controller 脇の補給 container →
+//! storage。ただし補給 container が枯れかけのときだけ extension より
+//! 前に割り込む (専任 upgrader を止めないため)。
 
 
 use crate::mem::{keys, MemoryExt};
@@ -209,15 +209,15 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         return;
     }
 
-    // spawn の次は tower。防衛の要が空だと襲撃で全部を失う。
+    // spawn の次は tower。防衛の要が空だと襲撃で全部を失う (実測: tower 0 で
+    // invader 4体の侵入を許し、経済 creep 全滅・進捗停止の壊滅に至った)。
     //
-    // 実測: 補給 container の枯渇割り込み (下) を tower より前に置いていた
-    // ため、stock は容量 2000 に対し常に枯れ気味で割り込みが成立し続け、
-    // tower には一度も届かなかった。その状態で invader 4体に侵入され、
-    // 経済 creep が全滅・進捗が完全停止する事故になった。
-    // tower は満タン (1000) になれば seek が false を返して先へ進むので、
-    // ここを先頭近くに置いても upgrade 系の補給を恒久的に妨げはしない。
-    if seek_transferable(creep, StructureType::Tower) {
+    // ただし確保するのは当面の迎撃分だけ。満タン (1000) まで独占させると、
+    // 小型 hauler しかいない復旧期に extension が埋まらず、大型 body を
+    // 設計できないまま生産が止まる (実測: tower 150 に対し extension
+    // 13/500、部屋の available が 14 で何も作れなくなった)。
+    // 残りは extension を満たしてから (下の「余力があれば tower を満タンに」)。
+    if tower_below_reserve(room) && seek_transferable(creep, StructureType::Tower) {
         return;
     }
 
@@ -230,6 +230,11 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
     }
 
     if seek_transferable(creep, StructureType::Extension) {
+        return;
+    }
+
+    // 生産用の備蓄が満ちた。余力で tower を満タンまで押し上げる。
+    if seek_transferable(creep, StructureType::Tower) {
         return;
     }
 
@@ -317,6 +322,19 @@ fn step_off_road(creep: &Creep, room: &screeps::objects::Room, anchor: Position)
 /// source 数 + 増員分いると消費は 20〜50/tick 程度で、hauler の一往復の間に
 /// 使い切られる量。容量 2000 の半分より手前で先回りする。
 const CONTROLLER_STOCK_LOW: u32 = 1000;
+
+/// tower に最優先で確保する量。攻撃1発 10 energy なので 30 発分。
+/// 当面の迎撃には足り、かつ extension (合計 500) を圧迫しない額。
+const TOWER_MIN_RESERVE: u32 = 300;
+
+/// 迎撃用の備蓄を下回っている tower があるか。
+fn tower_below_reserve(room: &screeps::objects::Room) -> bool {
+    room_structures(room).iter().any(|s| {
+        s.structure_type() == StructureType::Tower
+            && check_my_structure(s)
+            && !check_stored(s, &ResourceType::Energy, TOWER_MIN_RESERVE)
+    })
+}
 
 /// controller 脇の補給 container のどれかが枯れかけか。
 fn controller_stock_running_low(room: &screeps::objects::Room) -> bool {
