@@ -110,6 +110,16 @@ pub fn clear_colony_cache() {
 }
 
 impl ColonyState {
+    /// 経済が壊滅しているか (採掘か運搬のどちらかが途絶えた)。
+    ///
+    /// どちらが欠けてもエネルギー収入はゼロになる: miner がいなければ
+    /// 掘れず、hauler がいなければ spawn へ届かない。この状態では
+    /// 防衛より復旧を優先しないと、生産に使えるエネルギーが二度と
+    /// 貯まらないデススパイラルに入る。
+    pub fn economy_collapsed(&self) -> bool {
+        self.num_miners == 0 || self.num_haulers == 0
+    }
+
     /// tick 内で1回だけ観測する。
     /// do_spawn と creep_loop の両方が使うためキャッシュする。
     pub fn observe() -> std::rc::Rc<Self> {
@@ -276,7 +286,21 @@ fn upgrader_target(state: &ColonyState) -> i32 {
 pub fn role_targets(state: &ColonyState) -> Vec<(&'static str, i32)> {
     vec![
         // 防衛。攻撃能力を持つ敵がいるときだけ。何より優先する。
-        (ROLE_DEFENDER, if state.hostiles_present { 2 } else { 0 }),
+        //
+        // ただし経済が壊滅している間は作らない。収入がゼロの状態で防衛
+        // creep を逐次投入しても、spawn に貯まった端から最小 body が出て
+        // 消耗するだけで、敵 (TOUGH + HEAL 持ちの invader 隊) には無力。
+        // 実測: invader 4体の襲来中に defender を8体投入し、その間に
+        // 経済 creep が全滅して spawn 169/300・tower 0 の詰みに陥った。
+        // rampart と tower で籠城できる間に収入を立て直す方が確実に立ち直る。
+        (
+            ROLE_DEFENDER,
+            if state.hostiles_present && !state.economy_collapsed() {
+                2
+            } else {
+                0
+            },
+        ),
         // 静的採掘者。source に1体ずつ + 寿命が近い個体の後継。
         // WORK 5個で source の再生速度と釣り合うので、1 source 1体で足りる。
         (ROLE_MINER, state.total_sources + state.miners_expiring),
@@ -640,8 +664,9 @@ mod tests {
             has_extractor: false,
             hostiles_present: hostiles,
             miners_expiring: expiring,
-            num_miners: 0,
-            num_haulers: 0,
+            // 既定は経済が回っている状態。壊滅時の分岐は専用のテストで見る。
+            num_miners: sources,
+            num_haulers: sources,
             energy_backlog: 0,
             has_road_network: false,
             has_controller_stock: false,
@@ -757,6 +782,28 @@ mod tests {
     fn 敵がいれば防衛が立ち_最優先に並ぶ() {
         let targets = role_targets(&state(2, true, 0));
         assert_eq!(targets[0], (ROLE_DEFENDER, 2));
+    }
+
+    #[test]
+    fn 経済が壊滅している間は防衛より復旧を優先する() {
+        // miner か hauler が途絶えると収入がゼロになり、防衛 creep を
+        // 逐次投入しても最小 body が溶けるだけになる (実測のデススパイラル)。
+        let mut st = state(2, true, 0);
+        assert_eq!(target_of(&st, ROLE_DEFENDER), 2);
+
+        st.num_haulers = 0;
+        assert!(st.economy_collapsed());
+        assert_eq!(target_of(&st, ROLE_DEFENDER), 0);
+        // 復旧側の目標は据え置き (spawn はこちらを作るようになる)。
+        assert_eq!(target_of(&st, ROLE_MINER), 2);
+
+        st.num_haulers = 2;
+        st.num_miners = 0;
+        assert_eq!(target_of(&st, ROLE_DEFENDER), 0);
+
+        // 経済が戻れば防衛も戻る。
+        st.num_miners = 2;
+        assert_eq!(target_of(&st, ROLE_DEFENDER), 2);
     }
 
     #[test]

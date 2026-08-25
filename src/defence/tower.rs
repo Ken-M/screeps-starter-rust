@@ -5,6 +5,30 @@ use screeps::enums::StructureObject;
 use screeps::prelude::*;
 use screeps::{find, game, Part, ResourceType, StructureType};
 
+/// HEAL パーツ1個あたりの毎 tick 回復量 (隣接回復)。
+const HEAL_PER_PART: u32 = 12;
+
+/// 敵チームが1体に集中させられる毎 tick の回復量。
+///
+/// タワーの実効ダメージがこれを下回る間は、撃っても敵は削れず
+/// エネルギーだけが減る。「最も効率の良い敵を選ぶ」だけでは足りず、
+/// 「そもそも撃つ価値があるか」を判断する必要がある
+/// (実測: 射程 37〜41 の invader 群に 67 発撃ってタワーが 1000→0、
+/// 敵は 1000/1000 で無傷。その後の接近戦に丸腰で臨むことになった)。
+fn enemy_heal_power(enemies: &[screeps::objects::Creep]) -> u32 {
+    enemies
+        .iter()
+        .map(|enemy| {
+            enemy
+                .body()
+                .iter()
+                .filter(|bp| bp.hits() > 0 && bp.part() == Part::Heal)
+                .count() as u32
+                * HEAL_PER_PART
+        })
+        .sum()
+}
+
 /// タワーの攻撃威力は距離で減衰する。
 /// 射程 5 以内で最大 (600)、20 以上で最小 (150)、その間は線形。
 fn tower_damage_at(range: u32) -> u32 {
@@ -61,7 +85,17 @@ pub fn run_tower() {
                             damage + heal_parts * 100
                         });
 
-                    if let Some(enemy) = target {
+                    // 削れない相手には撃たない。タワーは修理・回復も担う
+                    // 防衛の要で、無駄撃ちで空にすると敵が rampart に
+                    // 取り付いたときに何もできなくなる。敵が近づけば
+                    // 威力は 600 まで戻るので、それまで温存する。
+                    let heal_power = enemy_heal_power(&enemies);
+                    let worth_shooting = target.is_some_and(|enemy| {
+                        let range = my_tower.pos().get_range_to(enemy.pos()) as u32;
+                        tower_damage_at(range) > heal_power
+                    });
+
+                    if let Some(enemy) = target.filter(|_| worth_shooting) {
                         debug!("try attack enemy {}", my_tower.id());
                         if my_tower.attack(enemy).is_ok() {
                             info!(
@@ -70,6 +104,12 @@ pub fn run_tower() {
                             );
                             is_done = true;
                         }
+                    } else if target.is_some() {
+                        info!(
+                            "hold fire: heal {} >= damage at range (energy {})",
+                            heal_power,
+                            my_tower.store().get_used_capacity(Some(ResourceType::Energy))
+                        );
                     }
 
                     if is_done {
