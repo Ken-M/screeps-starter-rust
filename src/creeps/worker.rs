@@ -37,8 +37,20 @@ pub fn run_worker(creep: &Creep, force_upgrade: bool) {
         == 0
     {
         if let Some(room) = creep.room() {
-            // worker は消費側なので controller 脇の補給 container からも引く。
-            super::hauler::collect_energy(creep, &room, true);
+            // 補給 container (controller 脇) を優先して汲む。
+            //
+            // 最寄り優先だと worker が source 脇 container に集まる。source は
+            // 岩に囲まれた袋小路にあることが多く、miner が container の上に
+            // 着席しているので、隣接して立てるマスは数マスしかない。そこへ
+            // hauler (搬出) と worker (調達) が同時に来ると身動きが取れなくなる
+            // (実測: (39,32)〜(41,34) の狭所に8体が密集し、hauler が滞留した)。
+            //
+            // 補給 container は hauler が運んだ先で、controller の近くにあり
+            // 消費側の職場に近い。ここから汲めば袋小路に立ち入らずに済む。
+            // 空なら従来どおり最寄りへフォールバックする。
+            if !collect_from_controller_stock(creep, &room) {
+                super::hauler::collect_energy(creep, &room, true);
+            }
         }
         return;
     }
@@ -113,4 +125,35 @@ fn controller_needs_rescue(creep: &Creep) -> bool {
     };
 
     (ticks_left as f64) < (max as f64) * DOWNGRADE_GUARD_RATIO
+}
+
+/// controller 脇の補給 container から汲む。隣接していれば withdraw、
+/// 遠ければそこへ向かう。在庫が無い・そもそも無い場合は false を返して
+/// 呼び出し側のフォールバックに任せる。
+fn collect_from_controller_stock(creep: &Creep, room: &screeps::objects::Room) -> bool {
+    for structure in room_structures(room).iter() {
+        if !is_controller_stock(structure) {
+            continue;
+        }
+        if !check_stored(structure, &screeps::ResourceType::Energy, 0) {
+            continue;
+        }
+        if creep.pos().is_near_to(structure.pos()) {
+            if let screeps::enums::StructureObject::StructureContainer(c) = structure {
+                if creep
+                    .withdraw(c, screeps::ResourceType::Energy, None)
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+            continue;
+        }
+        let res = find_path(creep, &structure.pos(), 1);
+        if !res.path().is_empty() && !res.incomplete() {
+            let _ = move_by_search_result(creep, &res);
+            return true;
+        }
+    }
+    false
 }
