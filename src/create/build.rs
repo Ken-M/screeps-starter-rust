@@ -89,6 +89,8 @@ fn plan_room(room: &Room) {
 
     // 置けないマスの集合を作る。
     let blocked = blocked_tiles(room, &structures, &sites);
+    // 道路は rampart / container と共存できるので、専用の判定を使う。
+    let road_blocked = road_blocked_tiles(room, &structures, &sites);
     // creep が立つ必要があるので建物を置いてはいけないマス。
     let reserved = reserved_tiles(room);
 
@@ -172,7 +174,7 @@ fn plan_room(room: &Room) {
     // 続いた。その間も body は道路前提 (MOVE 半分) のままなので、全員が
     // 平地を倍の fatigue で歩くことになる。繋がるまでは最優先で通す。
     if budget > 0 && road_urgent {
-        plan_roads(room, spawn_pos, &blocked, &mut budget, &mut placed_now);
+        plan_roads(room, spawn_pos, &road_blocked, &mut budget, &mut placed_now);
     }
 
     // --- 2. 拠点まわりの建物 ---
@@ -243,7 +245,7 @@ fn plan_room(room: &Room) {
     // --- 5. 幹線道路 ---
     // spawn から各 source と controller へ。creep の往復が最も多い経路。
     if budget > 0 {
-        plan_roads(room, spawn_pos, &blocked, &mut budget, &mut placed_now);
+        plan_roads(room, spawn_pos, &road_blocked, &mut budget, &mut placed_now);
     }
 }
 
@@ -850,6 +852,55 @@ fn road_plan_cost(room_name: screeps::RoomName) -> pathfinder::MultiRoomCostResu
         }
     }
     pathfinder::MultiRoomCostResult::CostMatrix(screeps::CostMatrix::from(cost))
+}
+
+/// 道路を置けないマス。
+///
+/// 一般の `blocked_tiles` と違い、rampart と container は除外する。
+/// Screeps では road はこの2つと同じマスに共存できるため。
+///
+/// 実測: 幹線の経路は防衛 rampart の上を通っており (rampart は歩けるので
+/// 経路としては正しい)、しかし blocked_tiles が全構造物を弾くために
+/// そこだけ道路が置けず、幹線が rampart のたびに分断されていた。
+/// 経路 44,15 → 43,16(r) → 44,17(r) → 45,18(r) → 44,19 のうち、
+/// 敷けたのは両端の2マスだけという状態だった。
+fn road_blocked_tiles(
+    room: &Room,
+    structures: &[StructureObject],
+    sites: &[screeps::objects::ConstructionSite],
+) -> HashSet<(u8, u8)> {
+    let mut blocked = HashSet::new();
+
+    let terrain = room_terrain(room);
+    for x in 0..50u8 {
+        for y in 0..50u8 {
+            let xy = RoomXY::checked_new(x, y).expect("in range");
+            if terrain.get_xy(xy) == screeps::Terrain::Wall {
+                blocked.insert((x, y));
+            }
+        }
+    }
+
+    let coexists = |ty: StructureType| {
+        matches!(ty, StructureType::Rampart | StructureType::Container)
+    };
+    for s in structures.iter() {
+        // 既にある道路のマスも「置けない」に入れる (二重配置の防止)。
+        if coexists(s.structure_type()) {
+            continue;
+        }
+        let p = s.pos();
+        blocked.insert((p.x().u8(), p.y().u8()));
+    }
+    for c in sites.iter() {
+        if coexists(c.structure_type()) {
+            continue;
+        }
+        let p = c.pos();
+        blocked.insert((p.x().u8(), p.y().u8()));
+    }
+
+    blocked
 }
 
 /// 幹線道路が通る予定のマス。
