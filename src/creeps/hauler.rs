@@ -5,9 +5,10 @@
 //! 採掘を静的採掘者に任せた分、運搬者は WORK を持たずに済む。同じエネルギー予算で
 //! CARRY と MOVE だけを積めるので、1体あたりの輸送量が増える。
 //!
-//! 配達先の優先順は spawn → tower → extension → controller 脇の補給
-//! container → storage。ただし補給 container が枯れかけのときだけ
-//! spawn の直後に割り込む (専任 upgrader を止めないため)。
+//! 配達先の優先順は spawn (生産の要) → tower (防衛の要) → extension →
+//! controller 脇の補給 container → storage。ただし補給 container が
+//! 枯れかけのときだけ extension より前に割り込む (専任 upgrader を
+//! 止めないため)。
 
 
 use crate::mem::{keys, MemoryExt};
@@ -208,17 +209,27 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         return;
     }
 
-    // controller 脇の補給 container が枯れかけなら tower / extension より
-    // 先に届ける。常に後回しだと、生産が回って extension が満ちない間は
-    // 一度も届かず、専任 upgrader (MOVE 1 の座り仕事 body) が自力調達に
-    // 出て寿命を移動で溶かす (実測: 補給が絶えた時間帯に進捗が 1/3 に低下)。
+    // spawn の次は tower。防衛の要が空だと襲撃で全部を失う。
+    //
+    // 実測: 補給 container の枯渇割り込み (下) を tower より前に置いていた
+    // ため、stock は容量 2000 に対し常に枯れ気味で割り込みが成立し続け、
+    // tower には一度も届かなかった。その状態で invader 4体に侵入され、
+    // 経済 creep が全滅・進捗が完全停止する事故になった。
+    // tower は満タン (1000) になれば seek が false を返して先へ進むので、
+    // ここを先頭近くに置いても upgrade 系の補給を恒久的に妨げはしない。
+    if seek_transferable(creep, StructureType::Tower) {
+        return;
+    }
+
+    // controller 脇の補給 container が枯れかけなら extension より先に届ける。
+    // 常に後回しだと、生産が回って extension が満ちない間は一度も届かず、
+    // 専任 upgrader (MOVE 1 の座り仕事 body) が自力調達に出て寿命を移動で
+    // 溶かす (実測: 補給が絶えた時間帯に進捗が 1/3 に低下)。
     if controller_stock_running_low(room) && deliver_controller_stock(creep, room) {
         return;
     }
 
-    if seek_transferable(creep, StructureType::Tower)
-        || seek_transferable(creep, StructureType::Extension)
-    {
+    if seek_transferable(creep, StructureType::Extension) {
         return;
     }
 
