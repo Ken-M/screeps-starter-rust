@@ -6,9 +6,8 @@
 //! CARRY と MOVE だけを積めるので、1体あたりの輸送量が増える。
 //!
 //! 配達先の優先順は spawn (生産の要) → tower (迎撃分 300 まで) →
-//! extension → tower (満タンまで) → controller 脇の補給 container →
-//! storage。ただし補給 container が枯れかけのときだけ extension より
-//! 前に割り込む (専任 upgrader を止めないため)。
+//! extension (生産の備蓄) → tower (満タンまで) → controller 脇の
+//! 補給 container → storage。
 
 
 use crate::mem::{keys, MemoryExt};
@@ -221,14 +220,18 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         return;
     }
 
-    // controller 脇の補給 container が枯れかけなら extension より先に届ける。
-    // 常に後回しだと、生産が回って extension が満ちない間は一度も届かず、
-    // 専任 upgrader (MOVE 1 の座り仕事 body) が自力調達に出て寿命を移動で
-    // 溶かす (実測: 補給が絶えた時間帯に進捗が 1/3 に低下)。
-    if controller_stock_running_low(room) && deliver_controller_stock(creep, room) {
-        return;
-    }
-
+    // 生産用の備蓄 (extension) は補給 container より先。
+    //
+    // かつては「stock が枯れかけなら extension より先に届ける」割り込みを
+    // 置いていた (f3cfcf3)。当時の upgrader は空荷になると自力調達に出て
+    // MOVE 1 の body で寿命を溶かしていたため。しかし 96dfa94 で
+    // 「席がある限り空荷でも席で待つ」に変えたので、その前提は無くなった。
+    //
+    // 割り込みを残したままだと、stock (容量 2000) は upgrader が消費し続けて
+    // 常に枯れ気味なので割り込みが恒久的に成立し、extension が埋まらない。
+    // 実測: available が 622/800 で頭打ちになり worker が1体も生産されず、
+    // 修理が止まって rampart が decay で 14431→6821 まで痩せた。
+    // rampart は次の襲撃を耐えるための命綱なので、修理役を確保する方を採る。
     if seek_transferable(creep, StructureType::Extension) {
         return;
     }
@@ -317,12 +320,6 @@ fn step_off_road(creep: &Creep, room: &screeps::objects::Room, anchor: Position)
     }
 }
 
-/// controller 脇の補給 container の在庫がこれを下回ったら「枯れかけ」とみなし、
-/// tower / extension より先に補給する。専任 upgrader (WORK 全振り) が
-/// source 数 + 増員分いると消費は 20〜50/tick 程度で、hauler の一往復の間に
-/// 使い切られる量。容量 2000 の半分より手前で先回りする。
-const CONTROLLER_STOCK_LOW: u32 = 1000;
-
 /// tower に最優先で確保する量。攻撃1発 10 energy なので 30 発分。
 /// 当面の迎撃には足り、かつ extension (合計 500) を圧迫しない額。
 const TOWER_MIN_RESERVE: u32 = 300;
@@ -334,14 +331,6 @@ fn tower_below_reserve(room: &screeps::objects::Room) -> bool {
             && check_my_structure(s)
             && !check_stored(s, &ResourceType::Energy, TOWER_MIN_RESERVE)
     })
-}
-
-/// controller 脇の補給 container のどれかが枯れかけか。
-fn controller_stock_running_low(room: &screeps::objects::Room) -> bool {
-    room_structures(room)
-        .iter()
-        .filter(|s| is_controller_stock(s))
-        .any(|s| !check_stored(s, &ResourceType::Energy, CONTROLLER_STOCK_LOW))
 }
 
 /// 種別 ty の受け入れ可能な最寄りの施設へ移動する。対象が無ければ false。
