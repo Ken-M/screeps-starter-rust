@@ -236,18 +236,22 @@ fn deliver(creep: &Creep, room: &screeps::objects::Room) {
         return;
     }
 
-    // 生産用の備蓄が満ちた。余力で tower を満タンまで押し上げる。
-    if seek_transferable(creep, StructureType::Tower) {
-        return;
-    }
-
-    // 生産用の備蓄が満ちていたら、controller 脇の補給 container へ。
-    // 余剰エネルギーをアップグレード係の手元へ届ける物流の後半分。
+    // 生産用の備蓄が満ちたら、次は成長 (controller 脇の補給 container)。
+    // tower の満タン化より先にする。tower の容量 1000 は迎撃分 300 の
+    // 3倍以上あり、そこを埋め切るまで stock に回さないと専任 upgrader が
+    // 干上がって進捗が止まる (実測: tower 720/1000 の間 stock は 0/2000 の
+    // ままで、進捗が1時間以上ゼロだった)。
+    // 迎撃分は上の tower_below_reserve で確保済みなので、防衛は破綻しない。
     if deliver_controller_stock(creep, room) {
         return;
     }
 
-    // それも満ちていれば storage へ退蔵する。
+    // 成長の分も満ちた。余力で tower を満タンまで押し上げる。
+    if seek_transferable(creep, StructureType::Tower) {
+        return;
+    }
+
+    // ここまで来たら spawn / tower / extension / stock がすべて満杯。
     {
         let res = find_nearest_transferable_structure(
             creep,

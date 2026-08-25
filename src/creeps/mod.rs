@@ -246,9 +246,14 @@ fn surplus_workers(state: &ColonyState) -> i32 {
 /// エネルギーは hauler が届けて初めて消費される。運び手を固定したまま
 /// 消費者だけ増やすと、滞留は source 脇 container と地面に積もり続け、
 /// 落下分は毎 tick 減衰で蒸発する。滞留に比例して hauler も足す。
-/// 上限は source 数 (輸送需要の源は結局 source の産出量なので)。
+///
+/// 上限は source 数の2倍。1倍だと足りない部屋がある: この部屋は spawn 側と
+/// controller が岩壁で分断され、唯一の通路が西回り約60〜80歩の大迂回路
+/// なので、hauler 1体の実効輸送は 2.5〜3.3/tick しかない。産出 20/tick を
+/// 運びきるには 6〜8体要る。実測では上限 5体で頭打ちになり、container が
+/// 満杯のまま地面に 4548 が積もって毎 tick 4.5 が蒸発していた。
 fn surplus_haulers(state: &ColonyState) -> i32 {
-    (state.energy_backlog / HAULER_SURPLUS_ENERGY_STEP).min(state.total_sources)
+    (state.energy_backlog / HAULER_SURPLUS_ENERGY_STEP).min(state.total_sources * 2)
 }
 
 /// 専任 upgrader の上限。
@@ -794,9 +799,18 @@ mod tests {
         st.energy_backlog = HAULER_SURPLUS_ENERGY_STEP - 1;
         assert_eq!(target_of(&st, ROLE_HAULER), base);
 
-        // 実測の発散時 (backlog 15k) でも上限は source 数まで。
+        // 実測の発散時 (backlog 15k) は上限未満なので素直に比例する。
         st.energy_backlog = 15_000;
-        assert_eq!(target_of(&st, ROLE_HAULER), base + st.total_sources);
+        assert_eq!(
+            target_of(&st, ROLE_HAULER),
+            base + 15_000 / HAULER_SURPLUS_ENERGY_STEP
+        );
+
+        // どれだけ積もっても上限は source 数の2倍まで。1倍では大迂回路の
+        // 部屋 (hauler 1体の実効輸送 2.5〜3.3/tick) で産出 20/tick を
+        // 運びきれず、container 満杯のまま地面に積もって蒸発する。
+        st.energy_backlog = 1_000_000;
+        assert_eq!(target_of(&st, ROLE_HAULER), base + st.total_sources * 2);
     }
 
     fn worker_target(st: &ColonyState) -> i32 {
