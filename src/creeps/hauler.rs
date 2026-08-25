@@ -52,7 +52,7 @@ pub fn run_hauler(creep: &Creep) {
 
     let filling = if used == 0 {
         true
-    } else if free == 0 {
+    } else if free == 0 || waiting_on_regen(creep, &room, used, store.get_capacity(None)) {
         false
     } else {
         creep.memory().bool(keys::FILLING)
@@ -379,4 +379,44 @@ fn deliver_controller_stock(creep: &Creep, room: &screeps::objects::Room) -> boo
         }
     }
     false
+}
+
+/// 汲み先が枯れているとみなす在庫量。
+/// source の産出は 1本あたり 10/tick なので、これを下回る container の前で
+/// 満載を待つのは「産出待ち」と同義になる。
+const SOURCE_STOCK_LOW: u32 = 200;
+
+/// 産出待ちに入らずに配達へ切り替える最低積載率 (分母)。2 = 半分。
+const DEPART_LOAD_DIVISOR: u32 = 2;
+
+/// 「満載まで待つ」のをやめて配達に出るべきか。
+///
+/// 道路網が整うと body は CARRY 偏重の大型 (実測 CARRY14 = 容量700) になるが、
+/// source の産出は 10/tick しかない。満載を待つと 70 tick も container の前に
+/// 張り付くことになり、その間 source 脇の狭所を占有して他の hauler と
+/// 押し合う (実測: hauler 2体が (40,32)〜(41,32) を往復しながら 9〜18/回しか
+/// 積めず、片方は在庫の奪い合いで一切増えていなかった)。
+///
+/// 半分以上積んでいて、かつ隣の汲み先が枯れているなら、待たずに届けて
+/// 往復を回す方が throughput が高い。container が潤沢なら従来どおり満載まで汲む。
+fn waiting_on_regen(
+    creep: &Creep,
+    room: &screeps::objects::Room,
+    used: u32,
+    capacity: u32,
+) -> bool {
+    if capacity == 0 || used * DEPART_LOAD_DIVISOR < capacity {
+        return false;
+    }
+    // 隣接する汲み先 (補給 container は自分の配達先なので除く) に
+    // まとまった在庫が残っていれば、まだ汲む価値がある。
+    let has_stock = room_structures(room).iter().any(|s| {
+        matches!(
+            s.structure_type(),
+            StructureType::Container | StructureType::Storage
+        ) && !is_controller_stock(s)
+            && creep.pos().is_near_to(s.pos())
+            && check_stored(s, &ResourceType::Energy, SOURCE_STOCK_LOW)
+    });
+    !has_stock
 }
