@@ -140,6 +140,29 @@ fn plan_room(room: &Room) {
         return;
     };
 
+    // 幹線が通る予定のマスは拠点の建物で塞がない。
+    let trunk = trunk_route_tiles(room, spawn_pos);
+
+    // 既に幹線上に立ってしまった非道路のサイトは撤去する。完成させると
+    // 道が永久に切れる。投入済みのエネルギーは戻らないが、唯一の経路を
+    // 失う損失の方がはるかに大きい (実測: spawn から南下する唯一の
+    // 経路 (44,18) に extension のサイトが立っていた)。
+    for site in sites.iter() {
+        let p = site.pos();
+        if site.structure_type() == StructureType::Road {
+            continue;
+        }
+        if trunk.contains(&(p.x().u8(), p.y().u8())) {
+            warn!(
+                "removing {:?} site at ({},{}): it blocks the trunk road",
+                site.structure_type(),
+                p.x().u8(),
+                p.y().u8()
+            );
+            let _ = site.remove();
+        }
+    }
+
     // --- 1.8. spawn から出る幹線の起点 ---
     // 拠点の増築より先に、spawn と既存の道路網を繋ぐ道を確保する。
     //
@@ -169,7 +192,7 @@ fn plan_room(room: &Room) {
         if count_of(*ty) >= *limit {
             continue;
         }
-        if let Some(xy) = pick_base_tile(spawn_pos, &blocked, &reserved, &placed_now) {
+        if let Some(xy) = pick_base_tile(spawn_pos, &blocked, &reserved, &placed_now, &trunk) {
             if try_place(room, xy, *ty) {
                 placed_now.insert((xy.x.u8(), xy.y.u8()));
                 budget -= 1;
@@ -706,6 +729,7 @@ fn pick_base_tile(
     blocked: &HashSet<(u8, u8)>,
     reserved: &HashSet<(u8, u8)>,
     placed_now: &HashSet<(u8, u8)>,
+    trunk: &HashSet<(u8, u8)>,
 ) -> Option<RoomXY> {
     let sx = spawn_pos.x().u8() as i8;
     let sy = spawn_pos.y().u8() as i8;
@@ -733,6 +757,7 @@ fn pick_base_tile(
                 if blocked.contains(&(x, y))
                     || reserved.contains(&(x, y))
                     || placed_now.contains(&(x, y))
+                    || trunk.contains(&(x, y))
                 {
                     continue;
                 }
@@ -827,13 +852,31 @@ fn road_plan_cost(room_name: screeps::RoomName) -> pathfinder::MultiRoomCostResu
     pathfinder::MultiRoomCostResult::CostMatrix(screeps::CostMatrix::from(cost))
 }
 
-fn plan_roads(
-    room: &Room,
-    spawn_pos: Position,
-    blocked: &HashSet<(u8, u8)>,
-    budget: &mut usize,
-    placed_now: &mut HashSet<(u8, u8)>,
-) {
+/// 幹線道路が通る予定のマス。
+///
+/// 拠点の建物 (extension 等) はここを避ける。同じマスを取り合うと、道を
+/// 敷いた先に建物が建って再び分断される。実測: spawn から南下する唯一の
+/// 経路である (44,18) に extension の建設サイトが立ち、完成すれば
+/// 道路が再び切れる状態になっていた。
+fn trunk_route_tiles(room: &Room, spawn_pos: Position) -> HashSet<(u8, u8)> {
+    let mut tiles = HashSet::new();
+    for goal in road_goals(room) {
+        let opts = pathfinder::SearchOptions::new(road_plan_cost)
+            .max_ops(2000)
+            .max_rooms(1);
+        let res = pathfinder::search(spawn_pos, goal, 1, Some(opts));
+        if res.incomplete() {
+            continue;
+        }
+        for step in res.path() {
+            tiles.insert((step.x().u8(), step.y().u8()));
+        }
+    }
+    tiles
+}
+
+/// 幹線を引く先。spawn から各 source / controller / 補給 container へ。
+fn road_goals(room: &Room) -> Vec<Position> {
     let mut goals: Vec<Position> = room.find(find::SOURCES, None).iter().map(|s| s.pos()).collect();
     if let Some(c) = room.controller() {
         goals.push(c.pos());
@@ -848,8 +891,17 @@ fn plan_roads(
             goals.push(s.pos());
         }
     }
+    goals
+}
 
-    for goal in goals {
+fn plan_roads(
+    room: &Room,
+    spawn_pos: Position,
+    blocked: &HashSet<(u8, u8)>,
+    budget: &mut usize,
+    placed_now: &mut HashSet<(u8, u8)>,
+) {
+    for goal in road_goals(room) {
         if *budget == 0 {
             return;
         }
