@@ -247,6 +247,93 @@ fn plan_room(room: &Room) {
     if budget > 0 {
         plan_roads(room, spawn_pos, &road_blocked, &mut budget, &mut placed_now);
     }
+
+    // --- 6. 拠点内の通路 ---
+    // 幹線が通ってからの仕上げ。優先度は幹線より下。
+    if budget > 0 && !road_urgent {
+        plan_base_roads(
+            room,
+            spawn_pos,
+            &structures,
+            &road_blocked,
+            &mut budget,
+            &mut placed_now,
+        );
+    }
+}
+
+/// 拠点内の通路を舗装する。
+///
+/// spawn / extension / tower に隣接する歩けるマスは、hauler が補給のために
+/// 立つ場所であり、拠点内の移動経路でもある。道路が繋がると body は道路前提
+/// (CARRY2:MOVE1) に切り替わるが、この body は平地では非MOVEパーツあたりの
+/// fatigue が倍かかるため、未舗装だと移動が半速になる。幹線だけ舗装して
+/// ここを放置すると、道路特化 body の利点が補給の局面で失われる。
+///
+/// 実測: 立ち位置になりうる33マスのうち舗装済みは6マス (18%) しかなかった。
+/// 建設 300/本・decay 0.01 energy/tick/本 に対し、hauler 5体の巡回が
+/// 倍速になるので回収は速い。
+fn plan_base_roads(
+    room: &Room,
+    spawn_pos: Position,
+    structures: &[StructureObject],
+    road_blocked: &HashSet<(u8, u8)>,
+    budget: &mut usize,
+    placed_now: &mut HashSet<(u8, u8)>,
+) {
+    let terrain = room_terrain(room);
+
+    // 補給先の周囲を候補にする。creep が隣接して transfer する相手。
+    let mut candidates: Vec<(u32, (u8, u8))> = Vec::new();
+    for s in structures.iter() {
+        if !matches!(
+            s.structure_type(),
+            StructureType::Spawn | StructureType::Extension | StructureType::Tower
+        ) || !is_mine(s)
+        {
+            continue;
+        }
+        let p = s.pos();
+        let (cx, cy) = (p.x().u8() as i8, p.y().u8() as i8);
+        for dx in -1..=1i8 {
+            for dy in -1..=1i8 {
+                let (x, y) = (cx + dx, cy + dy);
+                if !(0..50).contains(&x) || !(0..50).contains(&y) {
+                    continue;
+                }
+                let (x, y) = (x as u8, y as u8);
+                if road_blocked.contains(&(x, y)) || placed_now.contains(&(x, y)) {
+                    continue;
+                }
+                let xy = RoomXY::checked_new(x, y).expect("in range");
+                if terrain.get_xy(xy) == screeps::Terrain::Wall {
+                    continue;
+                }
+                let pos = Position::new(xy.x, xy.y, room.name());
+                let dist = spawn_pos.get_range_to(pos);
+                if dist > BASE_RADIUS as u32 {
+                    continue;
+                }
+                if !candidates.iter().any(|(_, t)| *t == (x, y)) {
+                    candidates.push((dist, (x, y)));
+                }
+            }
+        }
+    }
+
+    // spawn に近い順。補給の往復が最も濃い場所から舗装する。
+    candidates.sort_by_key(|(d, t)| (*d, t.1, t.0));
+
+    for (_, (x, y)) in candidates {
+        if *budget == 0 {
+            return;
+        }
+        let xy = RoomXY::checked_new(x, y).expect("in range");
+        if try_place(room, xy, StructureType::Road) {
+            placed_now.insert((x, y));
+            *budget -= 1;
+        }
+    }
 }
 
 /// 塞いでよい「門」の幅の上限 (通行可能マスの列の長さ)。
