@@ -85,6 +85,9 @@ pub mod keys {
     /// ロール転換時に creep_loop が消す。miner の MINE_AT と同じ発想で、
     /// 席を取り合って互いをブロックするのを防ぐ。
     pub const UPGRADE_SEAT: &str = "upgrade_seat";
+    /// 交通解決で移動を却下された連続回数。resolve_traffic が積み、
+    /// 許可された時点で消す。事実上のスタックの検知に使う。
+    pub const TRAFFIC_DENIED: &str = "traffic_denied";
     /// 粘着中の修理対象 "x,y"。repairer が書き、対象が閾値+余裕幅まで
     /// 回復するか消滅したら自分で消す。ロール転換時は creep_loop が消す。
     pub const REPAIR_AT: &str = "repair_at";
