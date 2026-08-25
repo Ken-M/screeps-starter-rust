@@ -834,9 +834,11 @@ mod tests {
         assert_eq!(role_targets(&st)[1].0, ROLE_MINER);
 
         // 運搬が1体でも走り出したら採掘を立てる番。滞留在庫は有限なので、
-        // 運搬だけ揃えても掘る手が無ければ在庫を食い潰して再び詰む。
+        // 運搬だけ揃えても掘る手が無ければ在庫を食い潰して再び詰む
+        // (実測: 撃退直後の復旧で hauler を3体続けて生産していた)。
         st.energy_backlog = 4000;
         st.num_haulers = 1;
+        st.num_miners = 0;
         assert!(st.economy_collapsed());
         assert_eq!(role_targets(&st)[1].0, ROLE_MINER);
     }
