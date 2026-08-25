@@ -27,6 +27,10 @@ const MAX_ACTIVE_SITES: usize = 6;
 /// 1回の計画で新規に置く上限。
 const MAX_NEW_SITES_PER_RUN: usize = 3;
 
+/// 幹線が spawn から繋がっていない間、道路のために上乗せするサイト枠。
+/// 通常枠が拠点の増築で埋まっていても道を通せるようにする。
+const ROAD_URGENT_EXTRA_SITES: usize = 3;
+
 /// spawn からこの範囲までを拠点とみなして extension 等を配置する。
 const BASE_RADIUS: i8 = 8;
 
@@ -52,8 +56,21 @@ fn plan_room(room: &Room) {
     }
     let rcl = controller.level() as u32;
 
+    // 幹線が spawn から繋がっていない間は、道路に専用の枠を上乗せする。
+    //
+    // 道路が無いと body 設計 (MOVE 比率) が誤ったままで、全 creep の移動が
+    // 平地で倍の fatigue になる。実測: RCL4 到達で storage (30,000) と
+    // extension が枠 6 を占め続け、道路の建設サイトが1件も立たないまま
+    // 102本が spawn から孤立していた。増築の裏で道が干上がるのを防ぐ。
+    let road_urgent = !crate::creeps::ColonyState::observe().has_road_network;
+    let site_cap = if road_urgent {
+        MAX_ACTIVE_SITES + ROAD_URGENT_EXTRA_SITES
+    } else {
+        MAX_ACTIVE_SITES
+    };
+
     let sites = room.find(find::MY_CONSTRUCTION_SITES, None);
-    if sites.len() >= MAX_ACTIVE_SITES {
+    if sites.len() >= site_cap {
         debug!("{}: {} sites in progress; hold", room.name(), sites.len());
         return;
     }
@@ -75,7 +92,7 @@ fn plan_room(room: &Room) {
     // creep が立つ必要があるので建物を置いてはいけないマス。
     let reserved = reserved_tiles(room);
 
-    let mut budget = std::cmp::min(MAX_NEW_SITES_PER_RUN, MAX_ACTIVE_SITES - sites.len());
+    let mut budget = std::cmp::min(MAX_NEW_SITES_PER_RUN, site_cap - sites.len());
     let mut placed_now: HashSet<(u8, u8)> = HashSet::new();
 
     // --- 1. source 脇の container ---
@@ -131,7 +148,7 @@ fn plan_room(room: &Room) {
     // spawn から完全に孤立したまま、道路の建設サイトが1件も立たない状態が
     // 続いた。その間も body は道路前提 (MOVE 半分) のままなので、全員が
     // 平地を倍の fatigue で歩くことになる。繋がるまでは最優先で通す。
-    if budget > 0 && !crate::creeps::ColonyState::observe().has_road_network {
+    if budget > 0 && road_urgent {
         plan_roads(room, spawn_pos, &blocked, &mut budget, &mut placed_now);
     }
 
