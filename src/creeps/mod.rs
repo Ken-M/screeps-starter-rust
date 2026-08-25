@@ -611,8 +611,19 @@ pub fn creep_loop() {
     // 固定アップグレード係を1体維持する。建設が続いても controller の進捗が
     // 完全には止まらないようにする。Memory フラグで粘着させる (tick ごとに
     // 指名が移ると、controller までの道中で指名が外れて誰も到着しない)。
+    //
+    // 専任 upgrader は「いる」だけでは代わりにならない。席で待つ設計 (96dfa94)
+    // なので、補給 container が空だと全員が空荷のまま停止する。実測: upgrader
+    // 3体が席で energy 0 のまま、進捗が 1時間以上ゼロで固まった (輸送が
+    // extension と tower で尽き、stock まで回らなかった)。
+    // 手持ちがある個体だけを「稼働中」と数え、全員が干上がっていれば
+    // 機動力のある worker に duty を渡す (worker は自分で container から汲める)。
     let duty_alive = roster.iter().any(|i| {
-        i.role == ROLE_UPGRADER
+        (i.role == ROLE_UPGRADER
+            && i.creep
+                .store()
+                .get_used_capacity(Some(screeps::ResourceType::Energy))
+                > 0)
             || (i.role == ROLE_WORKER && i.creep.memory().bool(crate::mem::keys::UPGRADE_DUTY))
     });
     if !duty_alive {

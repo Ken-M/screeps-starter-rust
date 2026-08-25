@@ -145,13 +145,20 @@ function report(parsed) {
   // 踏まえて 25%。
   const flags = [];
   if (errorsAfter.length > 0) flags.push('実行時エラーあり');
-  if (beforeCpu && afterCpu && afterCpu > beforeCpu * 1.25)
+  if (beforeCpu > 0 && afterCpu > beforeCpu * 1.25)
     flags.push(`CPU +${((afterCpu / beforeCpu - 1) * 100).toFixed(0)}%`);
-  if (beforeRate && afterRate && afterRate < beforeRate * 0.75)
-    flags.push(`進捗 ${((afterRate / beforeRate - 1) * 100).toFixed(0)}%`);
+  // `beforeRate && afterRate` と書くと afterRate === 0 が falsy で弾かれ、
+  // 「進捗が完全に止まった」という最悪の事態を素通しする (実測: 2.12 → 0.00
+  // を「✅ 回帰なし」と報告した)。before 側だけを存在確認する。
+  if (beforeRate > 0 && afterRate < beforeRate * 0.75)
+    flags.push(
+      afterRate === 0
+        ? '進捗が完全停止'
+        : `進捗 ${((afterRate / beforeRate - 1) * 100).toFixed(0)}%`
+    );
   // 滞留の発散は進捗低下より先に現れる先行指標 (実測: 5b624d5 で 4k→15k)。
   // 倍増かつ絶対量もそれなり、で判定して平時の揺れは拾わない。
-  if (beforeBacklog && afterBacklog > beforeBacklog * 2 && afterBacklog > 5000)
+  if (beforeBacklog > 0 && afterBacklog > beforeBacklog * 2 && afterBacklog > 5000)
     flags.push(`backlog ${fmt(beforeBacklog, 0)}→${fmt(afterBacklog, 0)}`);
   lines.push(flags.length ? `verdict       : ⚠ 要確認 (${flags.join(' / ')})` : 'verdict       : ✅ 回帰なし');
 
