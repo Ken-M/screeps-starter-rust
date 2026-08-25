@@ -17,6 +17,11 @@ const EMERGENCY_CREEP_FLOOR: i32 = 4;
 /// 少し上、spawn の自己回復上限 (300) と同じ。
 const RECOVERY_MIN_BUDGET: u32 = 300;
 
+/// 籠城貯金の目標額。敵がいて経済も壊滅している間は、ここまで貯めてから
+/// 生産する。標準的な miner (MOVE1 CARRY1 WORK5 = 550) を買える額。
+/// 最小個体を刻んで出しても討たれて溶けるだけなので、厚い1体に賭ける。
+const SIEGE_SAVE_TARGET: u32 = 550;
+
 /// セーフモードを張るかを判定して、必要なら発動する。
 ///
 /// 旧実装は「spawnのHPが満タンでない」「creep数が上限の1/3未満」「攻撃パーツ持ちが0」
@@ -317,6 +322,26 @@ pub fn do_spawn() {
         // 崩壊と生産停止が起きた。
         let logistics_down = colony.num_miners == 0 || colony.num_haulers == 0;
         let emergency = num_total_creep < EMERGENCY_CREEP_FLOOR || logistics_down;
+
+        // 籠城貯金。敵がいる最中の復旧生産は、作った端から討たれて
+        // エネルギーを捨てるだけになる。
+        //
+        // 実測: invader 4体の滞在中、緊急モードが available=136 で最小
+        // hauler (100) を出し、拠点の外へ出た直後に討たれた。spawn の
+        // 自己回復は毎 tick 1 しかないので、これを繰り返すと収入ゼロの
+        // まま永久に立ち直れない。
+        //
+        // 敵がいて経済も壊滅している間は、標準 body を買える額まで貯める。
+        // 貯まれば厚い個体を出せて生存率が上がり、NPC invader なら寿命で
+        // 消えるので、待つ間に自然回復した分がそのまま復興資金になる。
+        // 経済が回っている平時の防衛生産はこの制限を受けない。
+        if colony.hostiles_present && logistics_down && available < SIEGE_SAVE_TARGET {
+            warn!(
+                "siege saving: hostiles present, economy down, holding at {}/{}",
+                available, SIEGE_SAVE_TARGET
+            );
+            continue;
+        }
 
         // 回復段階: 人口が目標の 2/3 未満。
         //
