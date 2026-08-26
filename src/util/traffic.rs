@@ -39,10 +39,6 @@ pub fn clear_traffic() {
     INTENTS.with(|intents| intents.borrow_mut().clear());
 }
 
-/// 却下がこの回数連続したら警告する。1 tick 待ちは正常なので、
-/// 事実上のスタックになっている場合だけ拾う。
-const TRAFFIC_DENIED_WARN_EVERY: i32 = 10;
-
 /// 競合時の優先度 (設計 §3.2)。防衛 > 物流 > 採取 > アップグレード > 汎用。
 /// 間隔を空けてあるのは将来の挿入余地。
 fn role_priority(creep: &Creep) -> u8 {
@@ -248,34 +244,11 @@ pub fn resolve_traffic() {
                 debug!("traffic: shove {} {:?}", creep.name(), dir);
                 let _ = creep.move_direction(dir);
             }
-            // 却下は 1 tick 待つだけの想定だが、同じ creep が同じ行き先で
-            // 却下され続けると事実上のスタックになる。連続回数を Memory に
-            // 積み、しきい値を超えたら警告する (原因の切り分け用)。
-            for id in &res.denied {
-                use crate::mem::MemoryExt;
-                let intent = &intents[*id];
-                let cmem = intent.creep.memory();
-                let key = crate::mem::keys::TRAFFIC_DENIED;
-                let n = cmem.i32(key).unwrap_or(None).unwrap_or(0) + 1;
-                cmem.set(key, n);
-                if n % TRAFFIC_DENIED_WARN_EVERY == 0 {
-                    warn!(
-                        "traffic: {} denied {}x at ({},{}) -> ({},{})",
-                        intent.creep.name(),
-                        n,
-                        intent.from.x().u8(),
-                        intent.from.y().u8(),
-                        intent.to.x().u8(),
-                        intent.to.y().u8()
-                    );
-                }
-            }
-            for id in &res.granted {
-                use crate::mem::MemoryExt;
-                intents[*id]
-                    .creep
-                    .memory()
-                    .del(crate::mem::keys::TRAFFIC_DENIED);
+            // 却下は 1 tick 待てば解ける想定。滞留の切り分けが要るときは
+            // ここを warn に上げるが、creep ごとの Memory 読み書きは
+            // wasm/JS 境界を越えるので常設すると高くつく (実測 CPU +68%)。
+            if !res.denied.is_empty() {
+                debug!("traffic: {} denied in {}", res.denied.len(), room_name);
             }
         }
     });

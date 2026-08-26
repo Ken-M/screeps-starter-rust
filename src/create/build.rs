@@ -997,6 +997,15 @@ fn road_blocked_tiles(
 /// 経路である (44,18) に extension の建設サイトが立ち、完成すれば
 /// 道路が再び切れる状態になっていた。
 fn trunk_route_tiles(room: &Room, spawn_pos: Position) -> HashSet<(u8, u8)> {
+    // 経路は道路や建物が増えるまで変わらないので、しばらく使い回す。
+    // goals 4本 × max_ops 2000 の探索を計画のたびに回すと重い。
+    let now = game::time();
+    if let Some((built_at, cached)) = TRUNK_CACHE.with(|c| c.borrow().clone()) {
+        if now.saturating_sub(built_at) < TRUNK_CACHE_TTL {
+            return cached;
+        }
+    }
+
     let mut tiles = HashSet::new();
     for goal in road_goals(room) {
         let opts = pathfinder::SearchOptions::new(road_plan_cost)
@@ -1010,7 +1019,17 @@ fn trunk_route_tiles(room: &Room, spawn_pos: Position) -> HashSet<(u8, u8)> {
             tiles.insert((step.x().u8(), step.y().u8()));
         }
     }
+    TRUNK_CACHE.with(|c| *c.borrow_mut() = Some((now, tiles.clone())));
     tiles
+}
+
+/// 幹線経路のキャッシュ寿命 (tick)。道路や建物が増えると経路は変わりうるが、
+/// 計画自体が PLANNER_INTERVAL ごとなので、その数回分を使い回せば十分。
+const TRUNK_CACHE_TTL: u32 = 200;
+
+thread_local! {
+    static TRUNK_CACHE: std::cell::RefCell<Option<(u32, HashSet<(u8, u8)>)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// 幹線を引く先。spawn から各 source / controller / 補給 container へ。
