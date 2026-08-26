@@ -127,6 +127,20 @@ pub fn clear_colony_cache() {
 fn connected_road_count(room: &screeps::objects::Room) -> usize {
     use std::collections::HashSet;
 
+    // 道路網は建設が進むまで変わらない。BFS 自体は軽いが、道路が増えると
+    // 毎 tick 数百マスを走査することになる (実測: 114本の時点で CPU の
+    // 押し上げが目に見えた)。body 設計の切り替えは数十 tick 遅れても
+    // 実害が無いのでキャッシュする。
+    let now = game::time();
+    let name = room.name();
+    if let Some((built_at, count)) =
+        ROAD_NET_CACHE.with(|c| c.borrow().get(&name).copied())
+    {
+        if now.saturating_sub(built_at) < ROAD_NET_CACHE_TTL {
+            return count;
+        }
+    }
+
     let mut roads: HashSet<(u8, u8)> = HashSet::new();
     for s in room_structures(room).iter() {
         if s.structure_type() == screeps::StructureType::Road {
@@ -166,7 +180,19 @@ fn connected_road_count(room: &screeps::objects::Room) -> usize {
     while let Some((x, y)) = queue.pop() {
         push_neighbors(x, y, &mut seen, &mut queue);
     }
-    seen.len()
+
+    let count = seen.len();
+    ROAD_NET_CACHE.with(|c| c.borrow_mut().insert(name, (now, count)));
+    count
+}
+
+/// 道路網の連結本数を測り直す間隔 (tick)。
+const ROAD_NET_CACHE_TTL: u32 = 100;
+
+thread_local! {
+    /// 部屋ごとの (測った tick, 連結本数)。
+    static ROAD_NET_CACHE: std::cell::RefCell<HashMap<screeps::local::RoomName, (u32, usize)>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 impl ColonyState {
